@@ -39,10 +39,9 @@ export const thermostat = {
    * @param {object} context - Discovery context.
    * @param {object} context.system - Normalized system.
    * @param {object} context.zone - Normalized zone.
-   * @param {object} context.config - Normalized configuration.
    * @returns {object} The device payload.
    */
-  buildDevice(gladys, { system, zone, config }) {
+  buildDevice(gladys, { system, zone }) {
     const ids = thermostatIds(gladys, system.id, zone.index);
 
     const features = [
@@ -100,10 +99,13 @@ export const thermostat = {
       });
     }
 
+    // No `poll_frequency`: Gladys only accepts a closed set of intervals
+    // capped at one minute, far too aggressive for a cloud that refreshes
+    // every few minutes. The integration runs its own refresh loop instead,
+    // at the interval configured by the user (see index.js).
     return {
       name: buildName(system, zone),
       external_id: ids.device,
-      poll_frequency: config.poll_frequency,
       features,
     };
   },

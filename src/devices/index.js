@@ -58,6 +58,42 @@ export async function buildDiscoveredDevices(gladys, { client, config }) {
 }
 
 /**
+ * Refresh every device of the account in one pass.
+ *
+ * This is the integration's own polling: Gladys only accepts a closed set of
+ * poll intervals capped at one minute, which is far more often than a cloud
+ * refreshed every few minutes deserves, so the devices declare no
+ * `poll_frequency` and index.js calls this on a timer instead. Publishing a
+ * state for a device the user has not created yet is harmless — Gladys
+ * silently ignores an unknown feature id.
+ * @param {object} gladys - The SDK instance.
+ * @param {object} context - Refresh context.
+ * @param {object} context.client - The API client.
+ * @param {object} context.config - Normalized configuration.
+ */
+export async function refreshAllDevices(gladys, { client, config }) {
+  // One forced read fills the snapshot cache; the per-device polls below then
+  // reuse it instead of calling the API again.
+  const systems = await client.getSystems({ force: true });
+
+  for (const system of systems) {
+    await boiler.onPoll(gladys, { client, config, systemId: system.id });
+
+    for (const zone of system.zones) {
+      if (!zone.isActive) {
+        continue;
+      }
+      await thermostat.onPoll(gladys, {
+        client,
+        config,
+        systemId: system.id,
+        zoneIndex: zone.index,
+      });
+    }
+  }
+}
+
+/**
  * Find the blueprint owning a device type.
  * @param {string} type - Device type namespace.
  * @returns {object|undefined} The blueprint.

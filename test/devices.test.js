@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import {
   buildDiscoveredDevices,
   pollDevice,
+  refreshAllDevices,
   routeDevice,
   setDeviceValue,
 } from '../src/devices/index.js';
@@ -64,7 +65,6 @@ test('discovery covers the four requested thermostat features', async () => {
   const keys = thermostatDevice.features.map((feature) => feature.external_id.split(':').pop());
 
   assert.deepEqual(keys.sort(), ['heating', 'humidity', 'target-temperature', 'temperature']);
-  assert.equal(thermostatDevice.poll_frequency, config.poll_frequency);
 });
 
 test('the target temperature and the heating switch are controllable', async () => {
@@ -203,6 +203,41 @@ test('polling the boiler reports it idle when no circuit is producing', async ()
   await pollDevice(gladys, { external_id: ids.device }, { client, config });
 
   assert.equal(gladys.stateOf(ids.feature(BOILER_FEATURE.STATE)), 0);
+});
+
+// --- The integration's own refresh loop --------------------------------------
+
+test('a refresh publishes every device of every zone in one API read', async () => {
+  const gladys = createFakeGladys();
+  const { client, calls } = buildStubbedClient({ raw: buildTwoZoneSystem() });
+
+  await refreshAllDevices(gladys, { client, config });
+
+  const boilerFeatures = boilerIds(gladys, SYSTEM_ID);
+  const zone0 = thermostatIds(gladys, SYSTEM_ID, 0);
+  const zone1 = thermostatIds(gladys, SYSTEM_ID, 1);
+
+  assert.equal(
+    gladys.stateOf(boilerFeatures.feature(BOILER_FEATURE.OUTDOOR_TEMPERATURE)),
+    4.0585938,
+  );
+  assert.equal(gladys.stateOf(zone0.feature(THERMOSTAT_FEATURE.TEMPERATURE)), 21.9125);
+  assert.equal(gladys.stateOf(zone1.feature(THERMOSTAT_FEATURE.TEMPERATURE)), 18.5);
+
+  // The snapshot cache must collapse the three device reads into one fetch.
+  assert.equal(calls.filter((call) => call.url.endsWith('/homes')).length, 1);
+});
+
+test('a refresh skips inactive zones', async () => {
+  const raw = buildTwoZoneSystem();
+  raw.properties.zones[1].isActive = false;
+
+  const gladys = createFakeGladys();
+  const { client } = buildStubbedClient({ raw });
+  await refreshAllDevices(gladys, { client, config });
+
+  const zone1 = thermostatIds(gladys, SYSTEM_ID, 1);
+  assert.equal(gladys.stateOf(zone1.feature(THERMOSTAT_FEATURE.TEMPERATURE)), undefined);
 });
 
 // --- Routing and commands ----------------------------------------------------

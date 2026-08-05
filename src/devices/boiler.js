@@ -36,10 +36,9 @@ export const boiler = {
    * @param {object} gladys - The SDK instance.
    * @param {object} context - Discovery context.
    * @param {object} context.system - Normalized system.
-   * @param {object} context.config - Normalized configuration.
    * @returns {object} The device payload.
    */
-  buildDevice(gladys, { system, config }) {
+  buildDevice(gladys, { system }) {
     const ids = boilerIds(gladys, system.id);
 
     const features = [
@@ -85,10 +84,12 @@ export const boiler = {
       });
     }
 
+    // No `poll_frequency`: see the note in thermostat.js — the integration
+    // refreshes on its own schedule rather than on Gladys's, whose intervals
+    // are capped at one minute.
     return {
       name: `Saunier Duval ${system.productType ?? 'boiler'}`.trim(),
       external_id: ids.device,
-      poll_frequency: config.poll_frequency,
       features,
     };
   },

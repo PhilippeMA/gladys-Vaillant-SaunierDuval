@@ -80,8 +80,19 @@ by parsing the external id Gladys sends back
 ([`src/devices/externalIds.js`](./src/devices/externalIds.js)).
 
 One HTTP round trip per installation reads every sensor, so the snapshot is
-cached for a few seconds: all the devices poll at nearly the same time and must
-not multiply the calls to a rate-limited cloud.
+cached for a few seconds: several devices are refreshed in the same pass and
+must not multiply the calls to a rate-limited cloud.
+
+### Refreshing
+
+The devices deliberately declare **no `poll_frequency`**. Gladys only accepts a
+closed set of intervals — `1s`, `2s`, `10s`, `15s`, `30s`, `60s`, expressed in
+milliseconds — capped at one minute, and rejects the whole discovery batch on
+any other value. That cap is far too aggressive for a gateway that pushes its
+readings to the cloud every few minutes, and it cannot express the 60 s–1 h
+range the configuration offers. So `index.js` runs its own timer at the
+configured interval and calls `refreshAllDevices`; `onPoll` stays wired for
+on-demand refreshes.
 
 ## Run it locally
 

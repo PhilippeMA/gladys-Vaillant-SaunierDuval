@@ -19,7 +19,12 @@ import { GladysIntegration, logger } from '@gladysassistant/integration-sdk';
 import { isConfigured, normalizeConfig } from './src/config.js';
 import { SaunierDuvalClient } from './src/api/client.js';
 import { AuthenticationFailedError } from './src/api/auth.js';
-import { buildDiscoveredDevices, pollDevice, setDeviceValue } from './src/devices/index.js';
+import {
+  buildDiscoveredDevices,
+  pollDevice,
+  refreshAllDevices,
+  setDeviceValue,
+} from './src/devices/index.js';
 import { testConnection } from './src/actions.js';
 
 /**
@@ -33,6 +38,9 @@ const gladys = new GladysIntegration();
 
 let config = normalizeConfig();
 let client = null;
+
+// Timer of the integration's own refresh loop (see refreshAllDevices).
+let refreshTimer = null;
 
 /**
  * Return the API client, building it on first use. Returns null while the user
@@ -88,6 +96,9 @@ gladys.onSetValue(async (device, feature, value) => {
 });
 
 // --- Polling: Gladys asks to refresh a device --------------------------------
+// The devices declare no `poll_frequency` (Gladys caps its intervals at one
+// minute, see src/devices/thermostat.js), so this fires only on an on-demand
+// refresh; the periodic reads come from the loop below.
 gladys.onPoll(async (device) => {
   await pollDevice(gladys, device, { client: requireClient(), config });
 });
@@ -120,6 +131,12 @@ gladys.on('connected', async () => {
   await initialize();
 });
 
+// Publishing states over a closed socket only produces noise: the loop restarts
+// from the 'connected' handler once the SDK has reconnected.
+gladys.on('disconnected', () => {
+  stopRefreshLoop();
+});
+
 /**
  * (Re)publish the devices and report the application-level status shown in the
  * Configuration screen. Distinct from the container state machine: the
@@ -138,9 +155,41 @@ async function initialize() {
   try {
     await publishDevices();
     await setStatus(true);
+    // Publish a first set of values immediately, so the devices the user
+    // creates are not empty until the first tick.
+    await refreshStates();
+    startRefreshLoop();
   } catch (err) {
     logger.error('Initialization failed', err);
+    stopRefreshLoop();
     await setStatus(false, statusMessage(err));
+  }
+}
+
+/**
+ * Read the whole account and publish every value, logging but swallowing
+ * failures: a cloud hiccup must not kill the timer.
+ */
+async function refreshStates() {
+  try {
+    await refreshAllDevices(gladys, { client: requireClient(), config });
+  } catch (err) {
+    logger.error('Refreshing the Saunier Duval values failed', err);
+  }
+}
+
+/** (Re)start the refresh loop at the interval chosen by the user. */
+function startRefreshLoop() {
+  stopRefreshLoop();
+  logger.info(`Refreshing the values every ${config.poll_frequency}s`);
+  refreshTimer = setInterval(refreshStates, config.poll_frequency * 1000);
+}
+
+/** Stop the refresh loop, if it runs. */
+function stopRefreshLoop() {
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
   }
 }
 
@@ -189,6 +238,7 @@ function statusMessage(err) {
 // the container (SIGTERM/SIGINT).
 gladys.handleShutdown((signal) => {
   logger.info(`Received ${signal} -> graceful shutdown`);
+  stopRefreshLoop();
 });
 
 // --- Startup -----------------------------------------------------------------
