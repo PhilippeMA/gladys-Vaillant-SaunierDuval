@@ -23,8 +23,11 @@ export function buildStubbedClient({ raw = buildRawSystem(), controlIdentifier =
   });
 
   const calls = [];
+  // The stub replaces `request`, which sits above the counter in rawRequest:
+  // keep it accurate so the tests can assert the cost of a refresh cycle.
   client.request = async (url, { method = 'GET', body } = {}) => {
     calls.push({ url, method, body });
+    client.requestCount += 1;
 
     if (url.includes('/meta-info/control-identifier')) {
       return { controlIdentifier };

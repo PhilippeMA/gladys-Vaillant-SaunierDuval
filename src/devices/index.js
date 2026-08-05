@@ -35,8 +35,9 @@ export const DEVICE_BLUEPRINTS = [thermostat, boiler];
  * @returns {Promise<Array<object>>} The discovered devices.
  */
 export async function buildDiscoveredDevices(gladys, { client, config }) {
-  // Discovery must reflect the account as it is now, not a cached view.
-  const systems = await client.getSystems({ force: true });
+  // Discovery must reflect the account as it is now, not a cached view — down
+  // to the installation list, so a gateway paired since startup shows up.
+  const systems = await client.getSystems({ force: true, refreshHomes: true });
   const devices = [];
 
   for (const system of systems) {
@@ -72,8 +73,10 @@ export async function buildDiscoveredDevices(gladys, { client, config }) {
  * @param {object} context.config - Normalized configuration.
  */
 export async function refreshAllDevices(gladys, { client, config }) {
+  const callsBefore = client.requestCount;
   // One forced read fills the snapshot cache; the per-device polls below then
-  // reuse it instead of calling the API again.
+  // reuse it instead of calling the API again. The installation list comes
+  // from its own long-lived cache, so this costs ONE call per installation.
   const systems = await client.getSystems({ force: true });
 
   for (const system of systems) {
@@ -91,6 +94,10 @@ export async function refreshAllDevices(gladys, { client, config }) {
       });
     }
   }
+
+  logger.info(
+    `Refreshed ${systems.length} installation(s) in ${client.requestCount - callsBefore} API call(s)`,
+  );
 }
 
 /**

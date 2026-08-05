@@ -32,6 +32,13 @@ const REQUEST_TIMEOUT_MS = 20_000;
 /** Renew the access token this many seconds before it actually expires. */
 const TOKEN_SAFETY_MARGIN_MS = 60_000;
 
+/**
+ * Lifetime of the installation list. Long on purpose: pairing a gateway is a
+ * rare, manual gesture, and discovery refetches the list anyway — so a refresh
+ * cycle costs one call per installation instead of two.
+ */
+const HOMES_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
 /** Bounds of a room setpoint, matching what the MiGo controllers accept. */
 export const MIN_SETPOINT = 5;
 export const MAX_SETPOINT = 30;
@@ -67,9 +74,20 @@ export class SaunierDuvalClient {
     /** Control identifier ('tli' | 'vrc700'), cached per system id. */
     this.controlIdentifiers = new Map();
 
+    /**
+     * The installations of the account. They only change when the user pairs
+     * or removes a gateway, so they are cached far longer than the readings:
+     * refetching them on every cycle would double the calls for nothing.
+     */
+    this.homes = null;
+    this.homesAt = 0;
+
     this.snapshot = null;
     this.snapshotAt = 0;
     this.pendingSnapshot = null;
+
+    /** Total API calls made, so the refresh cost stays observable in the logs. */
+    this.requestCount = 0;
   }
 
   // --- Authentication --------------------------------------------------------
@@ -127,11 +145,13 @@ export class SaunierDuvalClient {
     this.sessionExpiresAt = Date.now() + (tokens.expires_in ?? 300) * 1000;
   }
 
-  /** Drop the cached session and snapshot (used when the config changes). */
+  /** Drop every cached value (used when the config changes). */
   reset() {
     this.session = null;
     this.sessionExpiresAt = 0;
     this.controlIdentifiers.clear();
+    this.homes = null;
+    this.homesAt = 0;
     this.invalidateSnapshot();
   }
 
@@ -177,6 +197,7 @@ export class SaunierDuvalClient {
    */
   async rawRequest(url, { method, body }) {
     const token = await this.getAccessToken();
+    this.requestCount += 1;
     return fetch(url, {
       method,
       headers: {
@@ -198,12 +219,22 @@ export class SaunierDuvalClient {
   // --- Reading ---------------------------------------------------------------
 
   /**
-   * List the homes (installations) attached to the account.
+   * List the homes (installations) attached to the account, from a long-lived
+   * cache: a refresh cycle needs the system ids, not a fresh inventory of the
+   * account. Discovery and the connection test pass `force` to pick up a
+   * gateway paired since the integration started.
+   * @param {object} [options] - Read options.
+   * @param {boolean} [options.force] - Refetch instead of using the cache.
    * @returns {Promise<Array<object>>} The raw homes.
    */
-  async getHomes() {
+  async getHomes({ force = false } = {}) {
+    if (!force && this.homes && Date.now() - this.homesAt < HOMES_CACHE_TTL_MS) {
+      return this.homes;
+    }
     const homes = await this.request(`${API_URL_BASE.tli}/homes`);
-    return (homes ?? []).filter((home) => Boolean(home.systemId));
+    this.homes = (homes ?? []).filter((home) => Boolean(home.systemId));
+    this.homesAt = Date.now();
+    return this.homes;
   }
 
   /**
@@ -240,15 +271,16 @@ export class SaunierDuvalClient {
   /**
    * Read every system of the account, normalized and cached.
    * @param {object} [options] - Read options.
-   * @param {boolean} [options.force] - Ignore the cache.
+   * @param {boolean} [options.force] - Ignore the snapshot cache.
+   * @param {boolean} [options.refreshHomes] - Also refetch the installations.
    * @returns {Promise<Array<object>>} The normalized systems.
    */
-  async getSystems({ force = false } = {}) {
+  async getSystems({ force = false, refreshHomes = false } = {}) {
     if (!force && this.snapshot && Date.now() - this.snapshotAt < this.cacheTtlMs) {
       return this.snapshot;
     }
     // Collapse a burst of concurrent polls into a single fetch.
-    this.pendingSnapshot = this.pendingSnapshot ?? this.fetchSystems();
+    this.pendingSnapshot = this.pendingSnapshot ?? this.fetchSystems({ refreshHomes });
     try {
       const systems = await this.pendingSnapshot;
       this.snapshot = systems;
@@ -266,11 +298,13 @@ export class SaunierDuvalClient {
   }
 
   /**
-   * Fetch and normalize every system, without touching the cache.
+   * Fetch and normalize every system, without touching the snapshot cache.
+   * @param {object} [options] - Read options.
+   * @param {boolean} [options.refreshHomes] - Also refetch the installations.
    * @returns {Promise<Array<object>>} The normalized systems.
    */
-  async fetchSystems() {
-    const homes = await this.getHomes();
+  async fetchSystems({ refreshHomes = false } = {}) {
+    const homes = await this.getHomes({ force: refreshHomes });
     const systems = [];
 
     for (const home of homes) {

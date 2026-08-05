@@ -228,6 +228,40 @@ test('a refresh publishes every device of every zone in one API read', async () 
   assert.equal(calls.filter((call) => call.url.endsWith('/homes')).length, 1);
 });
 
+test('a steady refresh cycle costs one API call per installation', async () => {
+  const gladys = createFakeGladys();
+  const { client } = buildStubbedClient({ raw: buildTwoZoneSystem() });
+
+  // First cycle pays for the installation list and the controller family.
+  await refreshAllDevices(gladys, { client, config });
+
+  const before = client.requestCount;
+  await refreshAllDevices(gladys, { client, config });
+  assert.equal(
+    client.requestCount - before,
+    1,
+    'a cycle must read the system state and nothing else',
+  );
+
+  // And it stays flat, cycle after cycle.
+  await refreshAllDevices(gladys, { client, config });
+  assert.equal(client.requestCount - before, 2);
+});
+
+test('discovery still refetches the installation list', async () => {
+  const gladys = createFakeGladys();
+  const { client, calls } = buildStubbedClient();
+
+  await refreshAllDevices(gladys, { client, config });
+  const homeCallsBefore = calls.filter((call) => call.url.endsWith('/homes')).length;
+
+  // A gateway paired since startup must show up, so discovery cannot answer
+  // from the long-lived cache.
+  await buildDiscoveredDevices(gladys, { client, config });
+
+  assert.equal(calls.filter((call) => call.url.endsWith('/homes')).length, homeCallsBefore + 1);
+});
+
 test('a refresh skips inactive zones', async () => {
   const raw = buildTwoZoneSystem();
   raw.properties.zones[1].isActive = false;

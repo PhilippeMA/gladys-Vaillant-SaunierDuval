@@ -42,6 +42,35 @@ const MAX_DISCOVERED_DEVICES = 2000;
 
 const EXTERNAL_ID_PREFIX = `ext:${SELECTOR}:`;
 
+/**
+ * Feature types Gladys can actually NAME, per category.
+ *
+ * The UI does not display the `name` an integration publishes: it looks up
+ * `deviceFeatureCategory.<category>.<type>` in its translations. A pair that is
+ * missing there renders as a blank label and a device titled "(undefined)" —
+ * which is what `humidity-sensor` + `integer` did, since humidity is only
+ * translated as `decimal`.
+ *
+ * Copied from front/src/config/i18n/fr.json of the Gladys repository, limited
+ * to the categories this integration publishes.
+ */
+const LABELLED_TYPES = {
+  'temperature-sensor': ['decimal', 'min', 'max', 'average'],
+  'humidity-sensor': ['decimal'],
+  'pressure-sensor': ['decimal', 'integer'],
+  thermostat: ['target-temperature'],
+  switch: [
+    'binary',
+    'power',
+    'energy',
+    'voltage',
+    'current',
+    'burglar',
+    'dimmer',
+    'target-current',
+  ],
+};
+
 // The core checks against its own flat lists; the SDK mirrors them, so
 // flattening the SDK constants gives the same vocabulary.
 const CATEGORIES = new Set(Object.values(DEVICE_FEATURE_CATEGORIES));
@@ -186,6 +215,29 @@ test('a feature missing min or max is caught', () => {
       ]),
     /min: NOT NULL/,
   );
+});
+
+test('every feature is one Gladys can put a name on', async () => {
+  for (const device of await discover()) {
+    for (const feature of device.features) {
+      const types = LABELLED_TYPES[feature.category];
+      assert.ok(types, `no known labels for category "${feature.category}"`);
+      assert.ok(
+        types.includes(feature.type),
+        `${feature.category}/${feature.type} has no label: the feature would render as "(undefined)"`,
+      );
+    }
+  }
+});
+
+test('humidity is published as a decimal, the only type it has a label for', async () => {
+  const [, thermostatDevice] = await discover();
+  const humidity = thermostatDevice.features.find((feature) =>
+    feature.external_id.endsWith(':humidity'),
+  );
+
+  assert.ok(humidity, 'the fixture reports humidity');
+  assert.equal(humidity.type, 'decimal');
 });
 
 test('a payload with an out-of-range poll_frequency is caught', () => {

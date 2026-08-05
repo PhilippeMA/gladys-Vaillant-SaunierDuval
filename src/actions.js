@@ -17,7 +17,8 @@ const logger = createLogger({ name: 'actions' });
  */
 export async function testConnection(client) {
   logger.info('Action test_connection -> live call to the Saunier Duval cloud');
-  const systems = await client.getSystems({ force: true });
+  // A diagnostic must not answer from any cache, including the installations.
+  const systems = await client.getSystems({ force: true, refreshHomes: true });
 
   if (systems.length === 0) {
     return {

@@ -93,7 +93,10 @@ export const thermostat = {
         name: 'Humidity',
         external_id: ids.feature(FEATURE.HUMIDITY),
         category: DEVICE_FEATURE_CATEGORIES.HUMIDITY_SENSOR,
-        type: DEVICE_FEATURE_TYPES.SENSOR.INTEGER,
+        // DECIMAL, not INTEGER: Gladys labels a feature from its
+        // category/type pair, and `humidity-sensor` only translates
+        // `decimal` — an integer humidity shows up as a nameless tile.
+        type: DEVICE_FEATURE_TYPES.SENSOR.DECIMAL,
         unit: DEVICE_FEATURE_UNITS.PERCENT,
         min: 0,
         max: 100,
@@ -143,7 +146,7 @@ export const thermostat = {
     if (zone.humidity !== null) {
       states.push({
         device_feature_external_id: ids.feature(FEATURE.HUMIDITY),
-        state: Math.round(zone.humidity),
+        state: zone.humidity,
       });
     }
     if (zone.targetTemperature !== null) {
