@@ -1,12 +1,18 @@
 // -----------------------------------------------------------------------------
 // The discovery payload against the rules the Gladys core actually applies.
 //
-// `POST /discovered_device` validates the whole batch and rejects it entirely
-// on the first violation, so ONE bad field means ZERO devices appear in the
-// Discovery screen — with no error on the integration side unless you look for
-// it. That is exactly what happened with `poll_frequency`, hence this file:
-// it mirrors server/lib/external-integration/externalIntegration.setDiscoveredDevices.js
-// so a payload the core would refuse fails here first.
+// There are TWO gates, and passing the first says nothing about the second:
+//
+//   1. publishing — `POST /discovered_device` validates the whole batch and
+//      rejects it entirely on the first violation, so one bad field means ZERO
+//      devices in the Discovery screen (what `poll_frequency: 300` did);
+//   2. creating — when the user clicks "Add to Gladys", the payload is written
+//      to the database, where the NOT NULL columns of `t_device_feature` are
+//      enforced. A feature can sail through gate 1 and still fail here with a
+//      422 (what the missing `min`/`max` did on the binary features).
+//
+// This file mirrors both: setDiscoveredDevices.js for the first,
+// server/models/device_feature.js for the second.
 // -----------------------------------------------------------------------------
 
 import { test } from 'node:test';
@@ -78,8 +84,36 @@ function assertAcceptedByGladys(devices) {
       if (feature.unit !== undefined && feature.unit !== null) {
         assert.ok(UNITS.has(feature.unit), `${featureAt}.unit: unknown unit`);
       }
+      assertStorable(feature, featureAt);
     });
   });
+}
+
+/**
+ * Apply the NOT NULL columns of `t_device_feature` — the constraints that bite
+ * at creation time, not at publication time.
+ *
+ * `selector` and `device_id` are the core's job; `unit` is nullable. Everything
+ * else below has no database default, so a missing value is a 422 the moment
+ * the user clicks "Add to Gladys".
+ * @param {object} feature - A published feature.
+ * @param {string} at - Path of the feature, for the assertion message.
+ */
+function assertStorable(feature, at) {
+  for (const field of ['name', 'external_id']) {
+    assert.equal(typeof feature[field], 'string', `${at}.${field}: NOT NULL, must be a string`);
+    assert.ok(feature[field].length > 0, `${at}.${field}: must not be empty`);
+  }
+  for (const field of ['read_only', 'has_feedback', 'keep_history']) {
+    assert.equal(typeof feature[field], 'boolean', `${at}.${field}: NOT NULL, must be a boolean`);
+  }
+  // The one that bit us: min/max are NOT NULL even for a binary feature, where
+  // "0 to 1" feels redundant enough to leave out.
+  for (const field of ['min', 'max']) {
+    assert.equal(typeof feature[field], 'number', `${at}.${field}: NOT NULL, must be a number`);
+    assert.ok(Number.isFinite(feature[field]), `${at}.${field}: must be finite`);
+  }
+  assert.ok(feature.min <= feature.max, `${at}: min must not exceed max`);
 }
 
 /**
@@ -116,6 +150,42 @@ test('no device declares a poll_frequency', async () => {
       `${device.name} must not declare a poll_frequency`,
     );
   }
+});
+
+test('every feature carries the min and max the database demands', async () => {
+  // Binary features are the trap: "0 to 1" reads as redundant, but the column
+  // is NOT NULL and the user only finds out when creating the device.
+  for (const device of await discover()) {
+    for (const feature of device.features) {
+      assert.equal(typeof feature.min, 'number', `${feature.external_id} has no min`);
+      assert.equal(typeof feature.max, 'number', `${feature.external_id} has no max`);
+    }
+  }
+});
+
+test('a feature missing min or max is caught', () => {
+  // Guards the guard: the exact shape that returned a 422 must fail here.
+  assert.throws(
+    () =>
+      assertAcceptedByGladys([
+        {
+          name: 'Boiler',
+          external_id: `${EXTERNAL_ID_PREFIX}boiler:abc`,
+          features: [
+            {
+              name: 'Boiler state',
+              external_id: `${EXTERNAL_ID_PREFIX}boiler:abc:state`,
+              category: DEVICE_FEATURE_CATEGORIES.SWITCH,
+              type: DEVICE_FEATURE_TYPES.SWITCH.BINARY,
+              read_only: true,
+              has_feedback: false,
+              keep_history: true,
+            },
+          ],
+        },
+      ]),
+    /min: NOT NULL/,
+  );
 });
 
 test('a payload with an out-of-range poll_frequency is caught', () => {

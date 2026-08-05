@@ -76,6 +76,10 @@ export const thermostat = {
         external_id: ids.feature(FEATURE.HEATING),
         category: DEVICE_FEATURE_CATEGORIES.SWITCH,
         type: DEVICE_FEATURE_TYPES.SWITCH.BINARY,
+        // Mandatory even on a binary feature: t_device_feature.min/max are
+        // NOT NULL, so omitting them fails device creation with a 422.
+        min: 0,
+        max: 1,
         read_only: false,
         has_feedback: true,
         keep_history: true,

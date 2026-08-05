@@ -59,6 +59,10 @@ export const boiler = {
         external_id: ids.feature(FEATURE.STATE),
         category: DEVICE_FEATURE_CATEGORIES.SWITCH,
         type: DEVICE_FEATURE_TYPES.SWITCH.BINARY,
+        // Mandatory even on a binary feature: t_device_feature.min/max are
+        // NOT NULL, so omitting them fails device creation with a 422.
+        min: 0,
+        max: 1,
         // Reported by the appliance, never commanded: the user acts on the
         // thermostat, the boiler only says whether it is firing.
         read_only: true,
