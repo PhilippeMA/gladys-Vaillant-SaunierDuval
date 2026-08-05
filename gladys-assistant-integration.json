@@ -1,0 +1,137 @@
+{
+  "manifest_version": 1,
+  "type": "device",
+  "name": "Saunier Duval",
+  "description": {
+    "en": "Control your Saunier Duval heating (MiGo): temperatures, humidity, boiler state and setpoint.",
+    "fr": "Pilotez votre chauffage Saunier Duval (MiGo) : températures, humidité, état et consigne."
+  },
+  "version": "1.0.0",
+  "docker_image": "ghcr.io/philippema/gladys-vaillant-saunierduval:1.0.0",
+  "gladys_version": ">=4.62.0",
+  "cover_image": "https://raw.githubusercontent.com/PhilippeMA/gladys-Vaillant-SaunierDuval/main/cover.png",
+  "transports": ["cloud"],
+  "config_schema": [
+    {
+      "key": "intro",
+      "type": "section",
+      "label": { "en": "Connect your MiGo account", "fr": "Connectez votre compte MiGo" },
+      "description": {
+        "en": "This integration talks to the Saunier Duval cloud, the same service the MiGo app uses. Sign in with the email address and the password of that app, and pick the country your account was created in. Your gateway (MiGo, MiGo Link) must already be paired in the app.",
+        "fr": "Cette intégration utilise le cloud Saunier Duval, le même service que l'application MiGo. Connectez-vous avec l'adresse e-mail et le mot de passe de cette application, et choisissez le pays dans lequel votre compte a été créé. Votre passerelle (MiGo, MiGo Link) doit déjà être appairée dans l'application."
+      },
+      "links": [
+        {
+          "url": "https://www.saunierduval.fr/particulier/produits/regulation-et-connectivite/",
+          "label": { "en": "Saunier Duval connectivity", "fr": "Connectivité Saunier Duval" }
+        }
+      ]
+    },
+    {
+      "key": "username",
+      "type": "string",
+      "label": { "en": "Email address", "fr": "Adresse e-mail" },
+      "description": {
+        "en": "The email address of your MiGo / Saunier Duval account.",
+        "fr": "L'adresse e-mail de votre compte MiGo / Saunier Duval."
+      },
+      "placeholder": { "en": "you@example.com", "fr": "vous@exemple.com" },
+      "required": true
+    },
+    {
+      "key": "password",
+      "type": "secret",
+      "label": { "en": "Password", "fr": "Mot de passe" },
+      "description": {
+        "en": "The password of your MiGo account. It is stored encrypted by Gladys and never sent back to the browser.",
+        "fr": "Le mot de passe de votre compte MiGo. Il est stocké chiffré par Gladys et n'est jamais renvoyé au navigateur."
+      },
+      "required": true
+    },
+    {
+      "key": "country",
+      "type": "select",
+      "label": { "en": "Country", "fr": "Pays" },
+      "description": {
+        "en": "The country your account was registered in. A wrong country makes the login fail.",
+        "fr": "Le pays dans lequel votre compte a été créé. Un pays incorrect fait échouer la connexion."
+      },
+      "required": true,
+      "default": "france",
+      "options": [
+        { "value": "france", "label": { "en": "France", "fr": "France" } },
+        { "value": "austria", "label": { "en": "Austria", "fr": "Autriche" } },
+        { "value": "czechrepublic", "label": { "en": "Czechia", "fr": "Tchéquie" } },
+        { "value": "finland", "label": { "en": "Finland", "fr": "Finlande" } },
+        { "value": "greece", "label": { "en": "Greece", "fr": "Grèce" } },
+        { "value": "hungary", "label": { "en": "Hungary", "fr": "Hongrie" } },
+        { "value": "italy", "label": { "en": "Italy", "fr": "Italie" } },
+        { "value": "lithuania", "label": { "en": "Lithuania", "fr": "Lituanie" } },
+        { "value": "luxembourg", "label": { "en": "Luxembourg", "fr": "Luxembourg" } },
+        { "value": "poland", "label": { "en": "Poland", "fr": "Pologne" } },
+        { "value": "portugal", "label": { "en": "Portugal", "fr": "Portugal" } },
+        { "value": "romania", "label": { "en": "Romania", "fr": "Roumanie" } },
+        { "value": "slovakia", "label": { "en": "Slovakia", "fr": "Slovaquie" } },
+        { "value": "spain", "label": { "en": "Spain", "fr": "Espagne" } }
+      ]
+    },
+    {
+      "key": "heating_on_mode",
+      "type": "select",
+      "label": { "en": "When heating is turned on", "fr": "Quand le chauffage est allumé" },
+      "description": {
+        "en": "Which mode the zone goes back to when you switch heating on: its weekly schedule, or a fixed manual temperature.",
+        "fr": "Le mode auquel la zone revient quand vous allumez le chauffage : son programme hebdomadaire, ou une température manuelle fixe."
+      },
+      "required": false,
+      "default": "TIME_CONTROLLED",
+      "options": [
+        {
+          "value": "TIME_CONTROLLED",
+          "label": { "en": "Weekly schedule", "fr": "Programme hebdomadaire" }
+        },
+        { "value": "MANUAL", "label": { "en": "Manual temperature", "fr": "Température manuelle" } }
+      ]
+    },
+    {
+      "key": "quick_veto_duration",
+      "type": "number",
+      "label": {
+        "en": "Temporary override duration (h)",
+        "fr": "Durée d'un forçage temporaire (h)"
+      },
+      "description": {
+        "en": "When the zone follows its schedule, changing the target temperature applies a temporary override. This is how long it lasts, in hours.",
+        "fr": "Quand la zone suit son programme, modifier la température de consigne applique un forçage temporaire. Voici sa durée, en heures."
+      },
+      "required": false,
+      "default": 3,
+      "min": 0.5,
+      "max": 24
+    },
+    {
+      "key": "poll_frequency",
+      "type": "number",
+      "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
+      "description": {
+        "en": "How often the temperatures are read from the cloud, in seconds. The gateway itself only reports every few minutes, so there is little value in going below 300.",
+        "fr": "Fréquence de lecture des températures depuis le cloud, en secondes. La passerelle ne remonte ses mesures que toutes les quelques minutes : descendre sous 300 n'apporte pas grand-chose."
+      },
+      "required": false,
+      "default": 300,
+      "min": 60,
+      "max": 3600
+    }
+  ],
+  "actions": [
+    {
+      "key": "test_connection",
+      "label": { "en": "Test the connection", "fr": "Tester la connexion" },
+      "description": {
+        "en": "Sign in to the Saunier Duval cloud and list the installations found on the account.",
+        "fr": "Se connecter au cloud Saunier Duval et lister les installations trouvées sur le compte."
+      },
+      "timeout_seconds": 60
+    }
+  ]
+}
