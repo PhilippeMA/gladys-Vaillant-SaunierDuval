@@ -1,40 +1,26 @@
 // -----------------------------------------------------------------------------
 // Consistency checks between `gladys-assistant-integration.json` and the code.
-// The manifest itself is validated by the store indexer, but nothing there can
-// know which handlers the code registers, nor which countries the API client
-// actually supports — these tests keep both in sync.
+// The manifest is validated by the store indexer, but nothing there can know
+// which handlers the code actually registers — these tests keep both in sync.
 // -----------------------------------------------------------------------------
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { DEFAULT_CONFIG } from '../src/config.js';
-import { COUNTRIES } from '../src/api/constants.js';
+import { COUNTRIES } from '../src/saunierDuval/const.js';
 
 const manifest = JSON.parse(
   await readFile(new URL('../gladys-assistant-integration.json', import.meta.url), 'utf8'),
 );
+const entryPoint = await readFile(new URL('../index.js', import.meta.url), 'utf8');
 
-/** Actions registered in index.js, keyed by the manifest action key. */
-const REGISTERED_ACTIONS = ['test_connection'];
-
-/** Field types the store schema accepts. */
-const FIELD_TYPES = [
-  'string',
-  'number',
-  'boolean',
-  'select',
-  'multi_select',
-  'secret',
-  'oauth2',
-  'section',
-];
-
-test('every manifest action has a registered handler', () => {
+test('every manifest action is registered by the entry point', () => {
   for (const action of manifest.actions ?? []) {
-    assert.ok(
-      REGISTERED_ACTIONS.includes(action.key),
-      `manifest action "${action.key}" has no handler in index.js`,
+    assert.match(
+      entryPoint,
+      new RegExp(`onAction\\(\\s*'${action.key}'`),
+      `manifest action "${action.key}" has no handler`,
     );
   }
 });
@@ -51,84 +37,75 @@ test('config_schema defaults stay consistent with DEFAULT_CONFIG', () => {
   }
 });
 
-test('every config field uses a supported type and a valid key', () => {
+test('every stored config field is known to the code', () => {
   for (const field of manifest.config_schema) {
-    assert.ok(FIELD_TYPES.includes(field.type), `field "${field.key}" has an unknown type`);
-    assert.match(field.key, /^[a-z0-9_]+$/, `field "${field.key}" has an invalid key`);
-    assert.ok(field.label?.en, `field "${field.key}" needs an English label`);
+    if (field.type === 'section') {
+      continue;
+    }
+    assert.ok(
+      field.key in DEFAULT_CONFIG,
+      `config field "${field.key}" has no entry in DEFAULT_CONFIG`,
+    );
   }
 });
 
-test('the password is a secret field, so it never reaches the browser', () => {
-  const password = manifest.config_schema.find((field) => field.key === 'password');
-  assert.equal(password.type, 'secret');
-  // The schema forbids a default on a secret field.
-  assert.equal(password.default, undefined);
-  assert.equal(password.required, true);
+test('the country options are exactly the realms Saunier Duval serves', () => {
+  const field = manifest.config_schema.find((f) => f.key === 'country');
+  const values = field.options.map((option) => option.value);
+  assert.deepEqual([...values].sort(), [...COUNTRIES].sort());
 });
 
-test('the country list matches the countries the API client accepts', () => {
-  const country = manifest.config_schema.find((field) => field.key === 'country');
-  const offered = country.options.map((option) => option.value);
-
-  assert.deepEqual([...offered].sort(), [...COUNTRIES].sort());
-  assert.ok(offered.includes(DEFAULT_CONFIG.country));
+test('the password is a secret field, never sent back to the browser', () => {
+  const field = manifest.config_schema.find((f) => f.key === 'password');
+  assert.equal(field.type, 'secret');
+  // The schema rejects a default on a secret, and a default password would be
+  // a credential committed to a public repository.
+  assert.equal(field.default, undefined);
 });
 
-test('the heating mode options match what the code understands', () => {
-  const field = manifest.config_schema.find((f) => f.key === 'heating_on_mode');
-  assert.deepEqual(
-    field.options.map((option) => option.value),
-    ['TIME_CONTROLLED', 'MANUAL'],
-  );
+test('the integration declares itself as cloud-only', () => {
+  // Everything goes through the Saunier Duval platform: claiming `local` would
+  // show a "prefer the local connection" toggle that could never be honoured.
+  assert.deepEqual(manifest.transports, ['cloud']);
+});
+
+test('numeric fields declare the same bounds the code enforces', () => {
+  const pollFrequency = manifest.config_schema.find((f) => f.key === 'poll_frequency');
+  assert.equal(pollFrequency.min, 60);
+  assert.equal(pollFrequency.max, 3600);
+  const quickVeto = manifest.config_schema.find((f) => f.key === 'quick_veto_duration');
+  assert.equal(quickVeto.min, 0.5);
+  assert.equal(quickVeto.max, 24);
 });
 
 test('section fields are purely presentational', () => {
-  const sections = manifest.config_schema.filter((field) => field.type === 'section');
-  assert.ok(sections.length > 0);
-
+  const sections = manifest.config_schema.filter((f) => f.type === 'section');
   for (const section of sections) {
     // A section stores NO value: declaring `required`, `default` or
-    // `placeholder` on it rejects the manifest, and its key must never leak
-    // into the config the code manipulates.
-    assert.equal(section.required, undefined);
-    assert.equal(section.default, undefined);
-    assert.equal(section.placeholder, undefined);
-    assert.ok(!(section.key in DEFAULT_CONFIG));
+    // `placeholder` on it rejects the manifest.
+    assert.equal(section.required, undefined, `section "${section.key}" must not be required`);
+    assert.equal(section.default, undefined, `section "${section.key}" must not have a default`);
+    assert.equal(
+      section.placeholder,
+      undefined,
+      `section "${section.key}" must not have a placeholder`,
+    );
+    assert.ok(section.label?.en, `section "${section.key}" needs an English label`);
+    assert.ok(
+      !(section.key in DEFAULT_CONFIG),
+      `section "${section.key}" stores no value and must not appear in DEFAULT_CONFIG`,
+    );
     for (const link of section.links ?? []) {
       assert.match(link.url, /^https:\/\//, 'section links must be https');
     }
   }
 });
 
-test('the manifest declares the cloud transport it actually uses', () => {
-  // Everything goes through the Vaillant Group cloud: declaring `local` would
-  // make Gladys offer a "prefer local" toggle this integration cannot honour.
-  assert.deepEqual(manifest.transports, ['cloud']);
-});
-
-test('the manifest carries the fields the store requires', () => {
-  for (const key of [
-    'manifest_version',
-    'type',
-    'name',
-    'description',
-    'version',
-    'docker_image',
-    'gladys_version',
-  ]) {
-    assert.ok(manifest[key] !== undefined, `manifest.${key} is required`);
-  }
-  assert.equal(manifest.manifest_version, 1);
-  assert.equal(manifest.type, 'device');
-  assert.match(manifest.version, /^\d+\.\d+\.\d+$/, 'the version must be strict semver');
-  assert.match(manifest.docker_image, /:\d+\.\d+\.\d+$/, 'the image must carry an explicit tag');
-  assert.ok(manifest.description.en && manifest.description.fr);
-});
-
-test('the docker image tag follows the manifest version', () => {
+test('the manifest version and the docker image tag stay in step', () => {
+  // The indexer serves whatever `version` says: a stale tag would ship the
+  // previous image under a new version number.
   assert.ok(
     manifest.docker_image.endsWith(`:${manifest.version}`),
-    'the indexer and the image must stay in lockstep',
+    `docker_image must be tagged ${manifest.version}`,
   );
 });

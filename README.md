@@ -1,98 +1,96 @@
 # Saunier Duval — Gladys Assistant integration
 
-External integration connecting [Gladys Assistant](https://gladysassistant.com)
-to **Saunier Duval** heating systems (MiGo, MiGo Link), built on the official
-[JavaScript SDK](https://github.com/GladysAssistant/integration-sdk-js) and the
-[integration template](https://github.com/GladysAssistant/integration-template-js).
+External integration bringing a **Saunier Duval** boiler into
+[Gladys Assistant](https://gladysassistant.com): heating zones, hydraulic
+circuits and domestic hot water, read and controlled through the
+**MiGo / MiGo Link** cloud.
 
-| Capability                   | Feature                             | Read | Write |
-| ---------------------------- | ----------------------------------- | :--: | :---: |
-| Thermostat temperature       | `thermostat` → `temperature`        |  ✅  |       |
-| Thermostat humidity          | `thermostat` → `humidity`           |  ✅  |       |
-| Target temperature           | `thermostat` → `target-temperature` |  ✅  |  ✅   |
-| Heating on / off             | `thermostat` → `heating`            |  ✅  |  ✅   |
-| Outdoor temperature          | `boiler` → `outdoor-temperature`    |  ✅  |       |
-| Boiler state (firing / idle) | `boiler` → `state`                  |  ✅  |       |
-| Water pressure               | `boiler` → `water-pressure`         |  ✅  |       |
+Built on the official
+[`@gladysassistant/integration-sdk`](https://github.com/GladysAssistant/integration-sdk-js),
+from the
+[JavaScript integration template](https://github.com/GladysAssistant/integration-template-js).
 
-User documentation: [`docs/en.md`](./docs/en.md) · [`docs/fr.md`](./docs/fr.md).
+> User documentation: [`docs/en.md`](./docs/en.md) ·
+> [`docs/fr.md`](./docs/fr.md) — that is what the Configuration screen links to.
 
-## How it works
+## What it exposes
 
-Saunier Duval appliances are driven by the **myVAILLANT cloud**: the MiGo app
-and the myVAILLANT app talk to the same backend, and only the Keycloak realm
-differs per brand. Saunier Duval is the `sdbg` brand there, so an account
-registered in France lives in the `sdbg-france-b2c` realm.
+Devices are **discovered**, not hard-coded: the integration reads the
+installation and creates what is actually there — one zone or four, a hot water
+tank or a combi boiler, one direct circuit or several.
 
-There is no public, documented API. The routes used here are the ones the mobile
-app itself calls — the same ones the community projects
-[myPyllant](https://github.com/signalkraft/myPyllant),
-[VaillantCloud](https://github.com/rmalbrecht/VaillantCloud) and
-[iobroker.vaillant](https://www.npmjs.com/package/iobroker.vaillant) rely on.
-They are stable in practice but **not contractual**: Vaillant can change them
-without notice.
+| Device          | Features                                                                                                                  |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Boiler          | Outdoor temperature + 24 h average, heating water pressure, current activity, fault code count and detail                 |
+| Heating zone    | Room temperature, room humidity (when measured), target temperature **(command)**, mode **(command)**, heating/idle state |
+| Heating circuit | Flow temperature, flow setpoint, circuit state                                                                            |
+| Hot water       | Water temperature, setpoint **(command)**, mode **(command)**, boost **(command)**, heating state                         |
 
-### Authentication
+## How it talks to the boiler
 
-The app uses an OAuth2 authorization-code flow with PKCE whose redirect URI is a
-mobile deep link a server cannot receive, and the login page is protected by an
-[ALTCHA](https://altcha.org) proof of work. So the integration drives the login
-form itself:
+Saunier Duval boilers behind a MiGo / MiGo Link gateway are served by the
+Vaillant Group "connected control" platform — Saunier Duval is the `sdbg` brand
+of the same backend that powers myVAILLANT. There is **no local API**: the
+integration authenticates against the Vaillant Group Keycloak with the
+credentials of the mobile application, and reads/writes over HTTPS.
 
-1. start the PKCE flow on the authorization endpoint, keeping the Keycloak
-   session cookies ([`src/api/cookieJar.js`](./src/api/cookieJar.js) — Node's
-   `fetch` stores none);
-2. read the form action out of the returned login page;
-3. solve the ALTCHA challenge ([`src/api/altcha.js`](./src/api/altcha.js));
-4. post the credentials and read the authorization code from the redirect;
-5. exchange it for an access + refresh token.
-
-Tokens are then refreshed in the background; a rejected refresh falls back to a
-full login.
+The API is not documented nor supported by Saunier Duval; the endpoints are the
+ones its mobile application uses, and they can change without notice. This
+project is not affiliated with, nor endorsed by, Saunier Duval or the Vaillant
+Group.
 
 ## Project structure
 
 ```
 .
-├─ index.js                          # SDK bootstrap + event wiring (no heating logic)
+├─ index.js                          # SDK bootstrap + event wiring (no protocol logic)
 ├─ src/
-│  ├─ api/
-│  │  ├─ constants.js                #   endpoints, brands, countries, modes
-│  │  ├─ cookieJar.js                #   minimal cookie jar for the login flow
-│  │  ├─ altcha.js                   #   ALTCHA proof-of-work solver
-│  │  ├─ auth.js                     #   OAuth2 + PKCE login and token refresh
-│  │  └─ client.js                   #   read a snapshot, write setpoint & mode
-│  ├─ devices/
-│  │  ├─ index.js                    #   registry: discovery + routing
-│  │  ├─ thermostat.js               #   one per heating zone (read + write)
-│  │  └─ boiler.js                   #   one per installation (read only)
-│  ├─ actions.js                     # "Test the connection" button
+│  ├─ saunierDuval/                  # ← the cloud API
+│  │  ├─ const.js                    #   endpoints, realms, controller families
+│  │  ├─ altcha.js                   #   proof-of-work solver required by the login page
+│  │  ├─ auth.js                     #   OIDC authorization-code + PKCE login, token refresh
+│  │  └─ client.js                   #   reads (one shared snapshot) and commands
+│  ├─ devices/                       # ← the translation into Gladys devices
+│  │  ├─ index.js                    #   snapshot -> device models, states, command routing
+│  │  ├─ system.js                   #   the boiler itself
+│  │  ├─ zone.js                     #   heating zone (thermostat)
+│  │  ├─ circuit.js                  #   hydraulic circuit
+│  │  ├─ domesticHotWater.js         #   hot water (water heater)
+│  │  ├─ mappings.js                 #   boiler vocabulary <-> Gladys enumerations
+│  │  └─ helpers.js                  #   rounding, state batches
 │  └─ config.js                      # config defaults + normalization
-├─ docs/{en,fr}.md                   # user documentation (re-hosted by Gladys)
+├─ docs/en.md, docs/fr.md            # user documentation, re-hosted by Gladys
 ├─ gladys-assistant-integration.json # manifest (name, config schema, image…)
-└─ Dockerfile                        # Node 24 Alpine, read-only rootfs ready
+├─ Dockerfile                        # Node 24 Alpine, read-only rootfs ready
+└─ .github/workflows/                # CI, multi-arch build, UI-driven release
 ```
 
-Unlike a fixed device list, the devices here are **discovered**: an account may
-hold several installations and each installation several heating zones. The
-registry therefore enumerates device _types_ and routes every poll and command
-by parsing the external id Gladys sends back
-([`src/devices/externalIds.js`](./src/devices/externalIds.js)).
+Four design points worth knowing before you edit:
 
-One HTTP round trip per installation reads every sensor, so the snapshot is
-cached for a few seconds: several devices are refreshed in the same pass and
-must not multiply the calls to a rate-limited cloud.
-
-### Refreshing
-
-The devices deliberately declare **no `poll_frequency`**. Gladys only accepts a
-closed set of intervals — `1s`, `2s`, `10s`, `15s`, `30s`, `60s`, expressed in
-milliseconds — capped at one minute, and rejects the whole discovery batch on
-any other value. That cap is far too aggressive for a gateway that pushes its
-readings to the cloud every few minutes, and it cannot express the 60 s–1 h
-range the configuration offers. So `index.js` runs its own timer at the
-configured interval and calls `refreshAllDevices`; `onPoll` stays wired for
-on-demand refreshes.
+- **One HTTP request per cycle, per installation.** The platform is rate
+  limited and shared with the mobile application, so the read is tiered: the
+  system payload (every published value comes from it) on each cycle, and a
+  metadata tier — installations, controller family, fault codes — on its own
+  30-minute cache. `getSnapshot()` also shares a single in-flight request, so
+  everything happening inside a cycle costs nothing extra. The gateway state
+  is read from the installations payload rather than from the dedicated
+  endpoint, which used to be one request per cycle for a value already in
+  hand. `test/apiBudget.test.js` pins the budget down.
+- **Modes are declared, not guessed.** Both mode features publish
+  `supported_options`, derived from the write tables in
+  [`src/devices/mappings.js`](./src/devices/mappings.js) — so the interface can
+  never offer a mode with no command behind it (Gladys would otherwise render
+  its whole enumeration, cooling included).
+- **The integration drives its own refresh loop**, and publishes no
+  `poll_frequency` on its devices. The Gladys core only accepts the fixed
+  frequencies of `DEVICE_POLL_FREQUENCIES` (1 s to 1 min, in **milliseconds**)
+  and rejects the _whole_ discovery payload on any other value — a boiler read
+  every few minutes cannot be expressed there at all. `onPoll` stays wired for
+  users who enable core polling by hand on a device.
+- **The setpoint write depends on the mode.** A scheduled zone gets a
+  _temporary override_ (quick veto) instead of a permanent setpoint, so the
+  user's schedule is never silently overwritten. See
+  [`src/devices/zone.js`](./src/devices/zone.js).
 
 ## Run it locally
 
@@ -106,9 +104,14 @@ npm start
 ```
 
 The three `GLADYS_*` variables are injected by the Gladys supervisor when the
-integration runs inside its sandboxed container.
+integration runs inside its sandboxed container; the SDK reads them
+automatically. Credentials come from the Gladys configuration screen, never
+from the environment.
 
 ## Quality checks
+
+The same three checks run on every push and pull request (see
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml)):
 
 ```bash
 npm run format:check   # Prettier
@@ -116,29 +119,25 @@ npm run lint           # ESLint
 npm test               # unit tests, via the built-in `node --test` runner
 ```
 
-The same three gates run on every push and pull request
-([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). Tests never touch the
-network: the HTTP layer of the client is replaced by fixtures shaped like real
-API payloads ([`test/helpers/`](./test/helpers)).
+Tests cover the parts where a silent mistake would be expensive: the mode
+mapping, which endpoint each command hits on each controller family, the
+discovery of a real installation payload, and the login proof of work.
 
-Before tagging a release, check the integration against the store validator:
+## Validate before publishing
 
 ```bash
 npx github:GladysAssistant/integration-store .
 ```
 
-## Publish
+Runs the exact checks of the store indexer — manifest, Docker image
+availability, cover image, code rules — and reports every problem at once.
 
-1. Add the GitHub topic `gladys-assistant-integration` to the repository.
-2. **Actions → Release → Run workflow**, pick `patch`, `minor` or `major`. The
-   workflow bumps the version everywhere (`package.json` + manifest
-   `version`/`docker_image`), pushes the `vX.Y.Z` tag and builds the
-   `linux/amd64` + `linux/arm64` image to `ghcr.io`.
-3. The decentralized indexer picks up the new manifest version and Gladys offers
-   a one-click install.
+## Release
 
-Replace [`cover.png`](./cover.png) (800×534 px, ≤150 KB) before publishing: the
-bundled one is the template's placeholder gradient.
+**Actions → Release → Run workflow**, pick `patch`, `minor` or `major`. The
+workflow bumps the version everywhere (`package.json` + manifest
+`version`/`docker_image`), pushes the `vX.Y.Z` tag and builds the
+`linux/amd64` + `linux/arm64` image to `ghcr.io`.
 
 ## License
 

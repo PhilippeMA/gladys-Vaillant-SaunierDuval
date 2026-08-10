@@ -1,170 +1,120 @@
 // -----------------------------------------------------------------------------
 // Device registry.
 //
-// Unlike a template with a fixed device list, the devices here are DISCOVERED:
-// the account may hold several installations, and each installation several
-// heating zones. So the registry does not enumerate devices — it enumerates
-// device *types* and knows how to:
-//   - build the discovery payload from a snapshot of the cloud account;
-//   - route an incoming poll or command back to the right system and zone,
-//     by reading the external id Gladys sends back.
+// Unlike a fixed catalog of demo devices, the devices of this integration are
+// DISCOVERED: an installation may have one zone or four, a hot water tank or
+// none, one direct circuit or several mixed ones. So there is no static list
+// here — one snapshot of the boiler is turned into a list of "device models",
+// and everything else (discovery payload, states to publish, command routing)
+// is read from those models.
 //
-// Each blueprint exposes the same shape:
-//   - type                              : device type namespace of its external ids
-//   - buildDevice(gladys, context)      : the discovery payload of ONE device
-//   - onPoll(gladys, context)           : periodic read
-//   - onSetValue(gladys, context)       : run a user command (thermostat only)
+// A device model is:
+//   {
+//     externalId,        // external_id of the device
+//     device,            // discovery payload sent to Gladys
+//     states,            // states to publish for the current snapshot
+//     commands,          // featureExternalId -> (client, value) => Promise
+//   }
+//
+// NOTE — no `poll_frequency` on the published devices, on purpose. The Gladys
+// core only accepts the fixed frequencies of DEVICE_POLL_FREQUENCIES (1 s to
+// 1 min, expressed in MILLISECONDS), and rejects the WHOLE discovery payload
+// otherwise. A boiler is read every few minutes, which that list cannot even
+// express, so the integration drives its own refresh loop (see index.js) and
+// pushes the states. Gladys-driven polling stays supported if a user enables
+// it by hand on a device: `onPoll` is still wired, and served from the same
+// cached snapshot.
 // -----------------------------------------------------------------------------
 
 import { createLogger } from '@gladysassistant/integration-sdk';
-import { thermostat } from './thermostat.js';
-import { boiler } from './boiler.js';
-import { parseDeviceExternalId, parseFeatureKey } from './externalIds.js';
+import { dhwSection } from '../saunierDuval/client.js';
+import { buildCircuitDevice } from './circuit.js';
+import { buildDomesticHotWaterDevice } from './domesticHotWater.js';
+import { buildSystemDevice } from './system.js';
+import { buildZoneDevice } from './zone.js';
 
 const logger = createLogger({ name: 'devices' });
 
-export const DEVICE_BLUEPRINTS = [thermostat, boiler];
-
 /**
- * Build the discovery payload of the whole account: one boiler per
- * installation, one thermostat per active heating zone.
- * @param {object} gladys - The SDK instance.
- * @param {object} context - Discovery context.
- * @param {object} context.client - The API client.
- * @param {object} context.config - Normalized configuration.
- * @returns {Promise<Array<object>>} The discovered devices.
- */
-export async function buildDiscoveredDevices(gladys, { client, config }) {
-  // Discovery must reflect the account as it is now, not a cached view — down
-  // to the installation list, so a gateway paired since startup shows up.
-  const systems = await client.getSystems({ force: true, refreshHomes: true });
-  const devices = [];
-
-  for (const system of systems) {
-    devices.push(boiler.buildDevice(gladys, { system, config }));
-
-    for (const zone of system.zones) {
-      // The controllers always expose their maximum number of zones; the ones
-      // that are not wired up report no usable value.
-      if (!zone.isActive) {
-        logger.debug(`Skipping inactive zone ${zone.index} of system ${system.id}`);
-        continue;
-      }
-      devices.push(thermostat.buildDevice(gladys, { system, zone, config }));
-    }
-  }
-
-  logger.info(`Discovered ${devices.length} device(s) across ${systems.length} installation(s)`);
-  return devices;
-}
-
-/**
- * Refresh every device of the account in one pass.
+ * Turn a snapshot of the account into the list of device models.
  *
- * This is the integration's own polling: Gladys only accepts a closed set of
- * poll intervals capped at one minute, which is far more often than a cloud
- * refreshed every few minutes deserves, so the devices declare no
- * `poll_frequency` and index.js calls this on a timer instead. Publishing a
- * state for a device the user has not created yet is harmless — Gladys
- * silently ignores an unknown feature id.
- * @param {object} gladys - The SDK instance.
- * @param {object} context - Refresh context.
- * @param {object} context.client - The API client.
- * @param {object} context.config - Normalized configuration.
+ * @param {object} gladys the SDK instance
+ * @param {Array} snapshot as returned by `SaunierDuvalClient.getSnapshot()`
+ * @param {object} config the integration configuration
+ * @returns {Array} device models
  */
-export async function refreshAllDevices(gladys, { client, config }) {
-  const callsBefore = client.requestCount;
-  // One forced read fills the snapshot cache; the per-device polls below then
-  // reuse it instead of calling the API again. The installation list comes
-  // from its own long-lived cache, so this costs ONE call per installation.
-  const systems = await client.getSystems({ force: true });
+export function buildDeviceModels(gladys, snapshot, config) {
+  const models = [];
 
-  for (const system of systems) {
-    await boiler.onPoll(gladys, { client, config, systemId: system.id });
+  for (const entry of snapshot ?? []) {
+    models.push(buildSystemDevice(gladys, entry));
 
-    for (const zone of system.zones) {
-      if (!zone.isActive) {
+    // A zone declared inactive in the boiler is a zone the installer did not
+    // wire: it reports nothing, so it would only add a dead device in Gladys.
+    const zones = entry.system?.properties?.zones ?? [];
+    for (const zone of zones) {
+      if (zone.isActive === false) {
+        logger.debug(`Zone ${zone.index} of ${entry.systemId} is inactive, skipped`);
         continue;
       }
-      await thermostat.onPoll(gladys, {
-        client,
-        config,
-        systemId: system.id,
-        zoneIndex: zone.index,
-      });
+      models.push(buildZoneDevice(gladys, entry, zone.index, config));
+    }
+
+    for (const circuit of entry.system?.state?.circuits ?? []) {
+      models.push(buildCircuitDevice(gladys, entry, circuit.index));
+    }
+
+    for (const dhw of dhwSection(entry.system?.state)) {
+      models.push(buildDomesticHotWaterDevice(gladys, entry, dhw.index));
     }
   }
 
-  logger.info(
-    `Refreshed ${systems.length} installation(s) in ${client.requestCount - callsBefore} API call(s)`,
-  );
+  logger.debug(`${models.length} device(s) built from ${(snapshot ?? []).length} system(s)`);
+  return models;
 }
 
-/**
- * Find the blueprint owning a device type.
- * @param {string} type - Device type namespace.
- * @returns {object|undefined} The blueprint.
- */
-export function findBlueprint(type) {
-  return DEVICE_BLUEPRINTS.find((blueprint) => blueprint.type === type);
+/** Discovery payload of every device. */
+export function toDiscoveredDevices(models) {
+  return models.map((model) => model.device);
 }
 
+/** States of every device. */
+export function toStates(models) {
+  return models.flatMap((model) => model.states);
+}
+
+/** Maximum number of states the host API accepts in one batch. */
+export const MAX_STATES_PER_BATCH = 100;
+
 /**
- * Resolve the blueprint and the platform coordinates of an incoming device.
- * @param {object} device - The device sent by Gladys.
- * @returns {{blueprint: object, systemId: string, zoneIndex: number|undefined}} The route.
+ * Split states into batches the host API accepts. A single boiler stays well
+ * under the limit, but an account with several installations and many zones
+ * would silently lose the overflow otherwise.
  */
-export function routeDevice(device) {
-  const parsed = parseDeviceExternalId(device?.external_id);
-  const blueprint = parsed ? findBlueprint(parsed.type) : undefined;
-  if (!parsed || !blueprint) {
-    throw new Error(`Unknown device external_id "${device?.external_id}"`);
+export function toStateBatches(states) {
+  const batches = [];
+  for (let i = 0; i < states.length; i += MAX_STATES_PER_BATCH) {
+    batches.push(states.slice(i, i + MAX_STATES_PER_BATCH));
   }
-  return { blueprint, systemId: parsed.systemId, zoneIndex: parsed.zoneIndex };
+  return batches;
+}
+
+/** States of ONE device, when Gladys polls it individually. */
+export function statesOfDevice(models, deviceExternalId) {
+  const model = models.find((candidate) => candidate.externalId === deviceExternalId);
+  return model ? model.states : [];
 }
 
 /**
- * Refresh one device.
- * @param {object} gladys - The SDK instance.
- * @param {object} device - The device to poll.
- * @param {object} context - Poll context.
- * @param {object} context.client - The API client.
- * @param {object} context.config - Normalized configuration.
+ * Find the command handler of a controllable feature.
+ * @returns {Function|null} `(client, value) => Promise`
  */
-export async function pollDevice(gladys, device, { client, config }) {
-  const { blueprint, systemId, zoneIndex } = routeDevice(device);
-  await blueprint.onPoll(gladys, { client, config, systemId, zoneIndex });
-}
-
-/**
- * Run a user command on one device feature.
- * @param {object} gladys - The SDK instance.
- * @param {object} command - The command sent by Gladys.
- * @param {object} command.device - The target device.
- * @param {object} command.feature - The target feature.
- * @param {number} command.value - The requested value.
- * @param {object} context - Command context.
- * @param {object} context.client - The API client.
- * @param {object} context.config - Normalized configuration.
- */
-export async function setDeviceValue(gladys, { device, feature, value }, { client, config }) {
-  const { blueprint, systemId, zoneIndex } = routeDevice(device);
-  if (typeof blueprint.onSetValue !== 'function') {
-    throw new Error(`Device "${device.external_id}" is read only`);
+export function findCommand(models, featureExternalId) {
+  for (const model of models) {
+    const command = model.commands[featureExternalId];
+    if (command) {
+      return command;
+    }
   }
-
-  const featureKey = parseFeatureKey(feature?.external_id);
-  if (!featureKey) {
-    throw new Error(`Unknown feature external_id "${feature?.external_id}"`);
-  }
-
-  await blueprint.onSetValue(gladys, {
-    client,
-    config,
-    systemId,
-    zoneIndex,
-    featureKey,
-    featureExternalId: feature.external_id,
-    value,
-  });
+  return null;
 }

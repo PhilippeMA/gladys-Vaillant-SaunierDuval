@@ -1,115 +1,165 @@
 # Saunier Duval
 
-This integration connects Gladys Assistant to your Saunier Duval heating system
-through the Vaillant Group cloud — the same service the **MiGo** app on your
-phone uses.
+This integration connects your **Saunier Duval** boiler to Gladys Assistant:
+temperatures, setpoints, heating modes and domestic hot water become Gladys
+devices, usable in your scenes and your charts.
 
-It lets you:
+It goes through the **Saunier Duval cloud**, the one behind the **MiGo** /
+**MiGo Link** mobile application. These boilers have no local API: everything
+travels over the Internet, so your gateway has to be online.
 
-- read the room temperature measured by the thermostat;
-- read the humidity measured by the thermostat (model dependent);
-- read the outdoor temperature;
-- read the boiler state (heating, or idle);
-- read the target temperature;
-- **change** the target temperature;
-- **change** the boiler state (turn heating on or off).
+## What you need
 
-## Supported hardware
+- A Saunier Duval boiler connected through a **MiGo** or **MiGo Link** gateway
+  (or a MiPro Sense / Exacontrol connected control behind a gateway).
+- The **account** you already use in the mobile application: same email
+  address, same password.
+- The **country** the account was created in.
 
-Any Saunier Duval installation already driven from the MiGo app:
+Nothing to install on the boiler, no API key to request.
 
-- a **MiGo** or **MiGo Link** gateway paired with a boiler (ThemaPlus Condens,
-  Isotwin, Duomax…);
-- controllers based on a **VRC700** (MiPro, MiPro Sense).
+## Setup
 
-One installation can hold several heating zones: Gladys then creates one
-thermostat per zone.
+1. In Gladys, open **Integrations → Install an integration** and install
+   **Saunier Duval**.
+2. Open the integration configuration screen and fill in:
+   - **Email**: the address of your MiGo / MiGo Link account;
+   - **Password**: of the same account. Gladys stores it encrypted and never
+     sends it back to the browser;
+   - **Country of the account**: the country the account was created in. This
+     matters: an account created in France cannot log in through another
+     country, and the login would be refused without further explanation;
+   - **Refresh interval**: how often, in seconds, the boiler is read. 300 s
+     (5 minutes) is a good setting — a boiler is a slow system, and the
+     Saunier Duval platform limits the number of calls;
+   - **Temporary override duration**: see "Changing a temperature" below.
+3. Click **Test the connection**. The message tells you how many installations
+   were found on your account.
+4. Open the **Devices** tab of the integration: your devices are already
+   listed. Pick the ones you want to create in Gladys.
 
-> **Bulex** accounts (Belgium) use the same backend but a different country list
-> than the one offered here. This integration targets Saunier Duval accounts.
+## The devices created
 
-## Requirements
+For each installation, the integration creates:
 
-1. A MiGo gateway already installed and **paired in the MiGo app**. This
-   integration reads the account, it does not set it up.
-2. The email address and the password of that MiGo account.
-3. The **country** the account was registered in. This is the most common cause
-   of failure: a wrong country makes the login fail even with a valid password.
+| Device                                  | What it exposes                                                                                                                                                |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Boiler**                              | Outdoor temperature (current and 24 h average), heating water pressure, current activity (heating, hot water, standby), number of fault codes and their detail |
+| **Zone** (one per heating zone)         | Room temperature, humidity (if your thermostat measures it), target temperature, mode, and whether it is heating right now                                     |
+| **Circuit** (one per hydraulic circuit) | Flow temperature actually produced, flow setpoint computed by the heating curve, circuit state                                                                 |
+| **Hot water**                           | Water temperature, setpoint, mode, a **Boost** button, and whether the boiler is heating the water                                                             |
 
-## Configuration
+Zones carry the name you gave them in the boiler ("Living room", "Upstairs"…).
+A zone declared inactive in the boiler is skipped: it reports nothing.
 
-Open the integration configuration in Gladys and fill in:
+**Water pressure** is the value worth watching: below ~1 bar the installation
+needs a top-up. A Gladys scene can warn you.
 
-| Field                  | Description                                                                              |
-| ---------------------- | ---------------------------------------------------------------------------------------- |
-| **Email address**      | The login of your MiGo account.                                                          |
-| **Password**           | The account password. Gladys stores it encrypted and never sends it back to the browser. |
-| **Country**            | The country the account was registered in (France by default).                           |
-| **When heating is on** | The mode a zone returns to when you switch heating back on.                              |
-| **Temporary override** | How long a target temperature lasts when the zone follows its schedule.                  |
-| **Refresh interval**   | How often the readings are fetched, in seconds.                                          |
+## Changing a temperature
 
-Then click **Test the connection**: the button lists the installations found on
-the account with their current temperatures. If that test passes, everything
-else will work.
+The value shown in the "Target temperature" field is the one you edit: the
+**manual temperature**, the one the Saunier Duval application displays — or the
+temporary override temperature while an override is running.
 
-## Devices created
+Deliberately not the boiler's "demand of the moment": that one drops to 0 as
+soon as the heating has nothing to do (a scheduled zone outside its slots,
+summer mode), and an input box pre-filled with 0 would be of no use.
 
-For each installation, Gladys creates two devices.
+The boiler has no single setpoint register: what gets written depends on the
+mode the zone runs in.
 
-**The thermostat** (one per heating zone):
+- **Zone on a schedule** ("Auto"): changing the temperature starts a
+  **temporary override**. The new setpoint applies for the configured duration
+  (3 h by default), then the schedule takes over again. This is exactly what
+  the mobile application does when you turn the dial on a scheduled zone: your
+  schedule is never overwritten.
+- **Zone in manual mode**: the setpoint is written for good, until you change
+  it again.
+- **Zone switched off**: the command is refused with a clear message. Change
+  the mode of the zone first.
 
-| Feature            | Read / write |
-| ------------------ | ------------ |
-| Temperature        | Read         |
-| Humidity           | Read         |
-| Target temperature | Read + write |
-| Heating (on / off) | Read + write |
+### Mode mapping
 
-**The boiler** (one per installation):
+| Gladys mode | Heating zone                                     | Hot water      |
+| ----------- | ------------------------------------------------ | -------------- |
+| Off         | Off                                              | Off            |
+| Heating     | Manual (or "Day" on MiPro / Exacontrol controls) | Manual / "Day" |
+| Auto        | Scheduled                                        | Scheduled      |
 
-| Feature             | Read / write |
-| ------------------- | ------------ |
-| Outdoor temperature | Read         |
-| Boiler state        | Read         |
-| Water pressure      | Read         |
+These are the **only three** modes offered, on the heating zone as on the hot
+water: the same ones the Saunier Duval application shows, in the same order.
+Gladys knows other values — "Cooling" for a thermostat, "Eco", "Away", "Boost"
+for a water heater — but the integration declares to it the modes your boiler
+actually accepts, so those buttons do not appear.
 
-Humidity and water pressure are only created when your installation actually
-reports them.
+The **wording differs between the two**, though, and that is not up to the
+integration: each category has its own vocabulary in Gladys. They are the same
+three notions.
 
-## How the target temperature is applied
+| Saunier Duval application | Heating zone (Gladys) | Hot water (Gladys) |
+| ------------------------- | --------------------- | ------------------ |
+| Manual                    | Heating               | Manual             |
+| Schedule                  | Auto                  | Schedule           |
+| Heating off               | Off                   | Off                |
 
-The behaviour depends on the mode the zone currently runs in, so that the value
-you pick in Gladys is the one the controller aims for:
+On older controls the "Set back" mode (permanent heating at the reduced
+temperature) reads as "Heating" too — Gladys has no value that matches it
+exactly.
 
-- **The zone follows its weekly schedule** → a temporary override is applied,
-  exactly like turning the dial on the thermostat. It lasts the configured
-  number of hours, then the schedule takes over again.
-- **The zone runs in manual mode** → the manual setpoint itself is changed,
-  permanently.
-- **The zone is switched off** → heating is turned back on in manual mode at the
-  requested temperature: asking for a temperature means asking for heat.
+## Hot water boost
 
-The **Heating** switch turns the zone off (`OFF` mode) or back on in the mode
-chosen in the configuration (weekly schedule by default).
+The **Boost** asks the boiler to heat the tank right now, outside of the
+schedule. The boiler clears it by itself once the tank is hot: Gladys will show
+it back as off at the next refresh.
 
-## Known limitations
+> On Gladys versions older than the
+> [#2815](https://github.com/GladysAssistant/Gladys/pull/2815) fix, the greyed
+> button of the pair shows the opposite of the real state ("Boost active" while
+> the boost is off). The clickable one is correct. This is a display bug of the
+> Gladys core, not of the integration: updating Gladys fixes it.
 
-- **The gateway is slow.** It only pushes its readings to the cloud every few
-  minutes: lowering the refresh interval below 300 seconds gains nothing and
-  multiplies the calls.
-- **Changes take a moment to show up.** After a command, the cloud can take one
-  to two minutes to reflect the new value.
-- **Unofficial API.** Saunier Duval does not document this API: it is the one
-  its mobile app uses. It can change without notice.
-- **One account at a time.** The integration reads every installation of an
-  account, but only one account can be configured.
+## Things to know
+
+- **Display delay.** After a command, Gladys shows the requested value right
+  away, then replaces it with the one the boiler confirms on the next cycle.
+  Needing one or two refreshes to see the real effect is normal.
+- **Rate limiting.** The Saunier Duval platform limits the number of requests,
+  and you share it with the mobile application. A refresh cycle costs **one
+  single request per installation**: every published value comes from the same
+  answer. The list of installations, the gateway state and the fault codes are
+  read separately, every 30 minutes only — which is why a gateway that just
+  went offline can take up to half an hour to be reported as such. Do not lower
+  the interval without a reason: 60 seconds is the allowed minimum, 300 seconds
+  the recommended setting.
+- **One account.** The integration reads every installation attached to the
+  account. If you have several, each one produces its own set of devices,
+  prefixed with its name.
+- **Unofficial API.** Saunier Duval neither documents nor supports this API:
+  it is the one its mobile application uses, and it can change without notice.
+  This integration is not affiliated with, nor endorsed by, Saunier Duval or
+  the Vaillant Group.
+
+## After an update of the integration
+
+An already-created device does not change by itself. The **Discovery** tab
+shows an **Update** button on the devices whose structure moved, and that
+button is what re-applies everything: new features, units, and the list of
+offered modes.
+
+One case to know about: Gladys detects a "changed structure" by comparing the
+features, their units and their bounds — **not the list of modes**. If an
+update of the integration only changes the offered modes, no **Update** button
+appears and the device keeps its old list. Delete the device and create it
+again from the Discovery tab: there is no other way.
 
 ## Troubleshooting
 
-- **"Login refused"**: check the email address, the password and above all the
-  **country**. Try signing in from the MiGo app to confirm the account works.
-- **No device appears**: run **Test the connection**. If no installation is
-  found, the gateway is not attached to this account.
-- **Values stopped updating**: check the logs of the integration container
-  (`LOG_LEVEL=debug` shows every API call).
+- **"Login refused"**: check the email, the password and above all the
+  **country** of the account. Check as well that these credentials work in the
+  mobile application.
+- **No installation found**: the account has no boiler attached, or the
+  gateway was paired with another account.
+- **Frozen values**: the gateway is probably offline. Check it in the mobile
+  application; the integration can only read what the platform knows.
+- **Detailed diagnosis**: set the `LOG_LEVEL` environment variable of the
+  integration to `debug` to see every call in the container logs.

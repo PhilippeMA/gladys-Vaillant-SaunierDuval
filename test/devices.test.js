@@ -1,380 +1,218 @@
 // -----------------------------------------------------------------------------
-// The device layer: what Gladys is offered at discovery, what is published on
-// a poll, and how a command reaches the right zone.
+// The devices are discovered, not declared: these tests check that a snapshot
+// of the boiler produces the right devices, the right features and the right
+// states — on both controller families.
 // -----------------------------------------------------------------------------
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  buildDiscoveredDevices,
-  pollDevice,
-  refreshAllDevices,
-  routeDevice,
-  setDeviceValue,
-} from '../src/devices/index.js';
-import { boilerIds, thermostatIds } from '../src/devices/externalIds.js';
-import { FEATURE as THERMOSTAT_FEATURE, buildName } from '../src/devices/thermostat.js';
-import { FEATURE as BOILER_FEATURE } from '../src/devices/boiler.js';
 import { normalizeConfig } from '../src/config.js';
+import {
+  buildDeviceModels,
+  findCommand,
+  statesOfDevice,
+  toDiscoveredDevices,
+  toStates,
+} from '../src/devices/index.js';
+import { THERMOSTAT_MODE, WATER_HEATER_MODE } from '../src/devices/mappings.js';
 import { createFakeGladys } from './helpers/fakeGladys.js';
-import { buildRawSystem, SYSTEM_ID } from './helpers/fixtures.js';
-import { buildStubbedClient, writeCalls } from './helpers/stubClient.js';
+import { tliSnapshotEntry, vrc700SnapshotEntry } from './helpers/fixtures.js';
 
-const config = normalizeConfig({ username: 'user@example.com', password: 'secret' });
+const config = normalizeConfig({ email: 'user@example.com', password: 's3cret' });
 
-/**
- * Build the two zones of a multi-zone installation.
- * @returns {object} A raw system payload with two active zones.
- */
-function buildTwoZoneSystem() {
-  const raw = buildRawSystem();
-  raw.state.zones.push({
-    ...raw.state.zones[0],
-    index: 1,
-    currentRoomTemperature: 18.5,
-    currentRoomHumidity: 51,
-  });
-  raw.properties.zones.push({ index: 1, isActive: true });
-  raw.configuration.zones.push({
-    index: 1,
-    general: { name: 'Chambre' },
-    heating: { operationModeHeating: 'MANUAL', manualModeSetpointHeating: 17 },
-  });
-  return raw;
+function build(entries) {
+  const gladys = createFakeGladys();
+  return { gladys, models: buildDeviceModels(gladys, entries, config) };
 }
 
-// --- Discovery ---------------------------------------------------------------
-
-test('discovery publishes one boiler and one thermostat per active zone', async () => {
-  const gladys = createFakeGladys();
-  const { client } = buildStubbedClient();
-
-  const devices = await buildDiscoveredDevices(gladys, { client, config });
-
-  assert.equal(devices.length, 2);
-  assert.equal(devices[0].external_id, boilerIds(gladys, SYSTEM_ID).device);
-  assert.equal(devices[1].external_id, thermostatIds(gladys, SYSTEM_ID, 0).device);
-});
-
-test('discovery covers the four requested thermostat features', async () => {
-  const gladys = createFakeGladys();
-  const { client } = buildStubbedClient();
-
-  const devices = await buildDiscoveredDevices(gladys, { client, config });
-  const thermostatDevice = devices[1];
-  const keys = thermostatDevice.features.map((feature) => feature.external_id.split(':').pop());
-
-  assert.deepEqual(keys.sort(), ['heating', 'humidity', 'target-temperature', 'temperature']);
-});
-
-test('the target temperature and the heating switch are controllable', async () => {
-  const gladys = createFakeGladys();
-  const { client } = buildStubbedClient();
-
-  const devices = await buildDiscoveredDevices(gladys, { client, config });
-  const byKey = Object.fromEntries(
-    devices[1].features.map((feature) => [feature.external_id.split(':').pop(), feature]),
+/** State published for a feature, by its external id. */
+function stateOf(models, featureExternalId) {
+  const found = toStates(models).find(
+    (state) => state.device_feature_external_id === featureExternalId,
   );
+  return found?.state;
+}
 
-  assert.equal(byKey['target-temperature'].read_only, false);
-  assert.equal(byKey['target-temperature'].has_feedback, true);
-  assert.equal(byKey.heating.read_only, false);
-  assert.equal(byKey.temperature.read_only, true);
-  assert.equal(byKey.humidity.read_only, true);
-});
-
-test('the boiler exposes the outdoor temperature, its state and its pressure', async () => {
-  const gladys = createFakeGladys();
-  const { client } = buildStubbedClient();
-
-  const devices = await buildDiscoveredDevices(gladys, { client, config });
-  const keys = devices[0].features.map((feature) => feature.external_id.split(':').pop());
-
-  assert.deepEqual(keys.sort(), ['outdoor-temperature', 'state', 'water-pressure']);
-  // The boiler is observed, never commanded: the switch lives on the thermostat.
-  assert.ok(devices[0].features.every((feature) => feature.read_only === true));
-});
-
-test('features the installation does not measure are not declared', async () => {
-  const raw = buildRawSystem();
-  delete raw.state.zones[0].currentRoomHumidity;
-  delete raw.state.system.systemWaterPressure;
-
-  const gladys = createFakeGladys();
-  const { client } = buildStubbedClient({ raw });
-  const devices = await buildDiscoveredDevices(gladys, { client, config });
-
-  const boilerKeys = devices[0].features.map((feature) => feature.external_id.split(':').pop());
-  const thermostatKeys = devices[1].features.map((feature) => feature.external_id.split(':').pop());
-  assert.ok(!boilerKeys.includes('water-pressure'));
-  assert.ok(!thermostatKeys.includes('humidity'));
-});
-
-test('inactive zones are not turned into devices', async () => {
-  const raw = buildTwoZoneSystem();
-  raw.properties.zones[1].isActive = false;
-
-  const gladys = createFakeGladys();
-  const { client } = buildStubbedClient({ raw });
-  const devices = await buildDiscoveredDevices(gladys, { client, config });
-
-  assert.equal(devices.length, 2, 'only the boiler and the active zone');
-});
-
-test('a multi-zone installation names each thermostat after its zone', async () => {
-  const gladys = createFakeGladys();
-  const { client } = buildStubbedClient({ raw: buildTwoZoneSystem() });
-
-  const devices = await buildDiscoveredDevices(gladys, { client, config });
-
-  assert.equal(devices.length, 3);
-  assert.equal(devices[1].name, 'Saunier Duval Maison - Salon');
-  assert.equal(devices[2].name, 'Saunier Duval Maison - Chambre');
-});
-
-test('a single-zone installation keeps a simple name', () => {
-  const system = { name: 'Maison', zones: [{ name: 'Salon' }] };
-  assert.equal(buildName(system, system.zones[0]), 'Saunier Duval Maison');
-});
-
-// --- Polling -----------------------------------------------------------------
-
-test('polling a thermostat publishes its four values', async () => {
-  const gladys = createFakeGladys();
-  const { client } = buildStubbedClient();
-  const ids = thermostatIds(gladys, SYSTEM_ID, 0);
-
-  await pollDevice(gladys, { external_id: ids.device }, { client, config });
-
-  assert.equal(gladys.stateOf(ids.feature(THERMOSTAT_FEATURE.TEMPERATURE)), 21.9125);
-  assert.equal(gladys.stateOf(ids.feature(THERMOSTAT_FEATURE.HUMIDITY)), 42);
-  assert.equal(gladys.stateOf(ids.feature(THERMOSTAT_FEATURE.TARGET_TEMPERATURE)), 20);
-  assert.equal(gladys.stateOf(ids.feature(THERMOSTAT_FEATURE.HEATING)), 1);
-});
-
-test('polling a thermostat skips the sensors the gateway did not report', async () => {
-  const raw = buildRawSystem();
-  delete raw.state.zones[0].currentRoomHumidity;
-
-  const gladys = createFakeGladys();
-  const { client } = buildStubbedClient({ raw });
-  const ids = thermostatIds(gladys, SYSTEM_ID, 0);
-
-  await pollDevice(gladys, { external_id: ids.device }, { client, config });
-
-  assert.equal(
-    gladys.stateOf(ids.feature(THERMOSTAT_FEATURE.HUMIDITY)),
-    undefined,
-    'a missing reading must not be published as 0',
+function textOf(models, featureExternalId) {
+  const found = toStates(models).find(
+    (state) => state.device_feature_external_id === featureExternalId,
   );
+  return found?.text;
+}
+
+test('a MiGo Link installation produces a boiler, a zone, a circuit and a hot water device', () => {
+  const { models } = build([tliSnapshotEntry()]);
+  const externalIds = models.map((model) => model.externalId);
+  assert.deepEqual(externalIds, [
+    'boiler:system-1',
+    'zone:system-1-0',
+    'circuit:system-1-0',
+    'hot-water:system-1-255',
+  ]);
 });
 
-test('polling a thermostat reports heating as off when the zone is off', async () => {
-  const gladys = createFakeGladys();
-  const { client } = buildStubbedClient({
-    raw: buildRawSystem({ zoneHeating: { operationModeHeating: 'OFF' } }),
-  });
-  const ids = thermostatIds(gladys, SYSTEM_ID, 0);
-
-  await pollDevice(gladys, { external_id: ids.device }, { client, config });
-
-  assert.equal(gladys.stateOf(ids.feature(THERMOSTAT_FEATURE.HEATING)), 0);
+test('every discovered device carries a name and at least one feature', () => {
+  const { models } = build([tliSnapshotEntry()]);
+  for (const device of toDiscoveredDevices(models)) {
+    assert.ok(device.name, `${device.external_id} needs a name`);
+    assert.ok(device.features.length > 0, `${device.external_id} needs features`);
+    for (const feature of device.features) {
+      assert.ok(feature.external_id.startsWith(device.external_id));
+      assert.ok(feature.category && feature.type);
+    }
+  }
 });
 
-test('polling the boiler publishes the outdoor temperature and its state', async () => {
-  const gladys = createFakeGladys();
-  const { client } = buildStubbedClient({
-    raw: buildRawSystem({ circuitState: { circuitState: 'HEATING' } }),
-  });
-  const ids = boilerIds(gladys, SYSTEM_ID);
-
-  await pollDevice(gladys, { external_id: ids.device }, { client, config });
-
-  assert.equal(gladys.stateOf(ids.feature(BOILER_FEATURE.OUTDOOR_TEMPERATURE)), 4.0585938);
-  assert.equal(gladys.stateOf(ids.feature(BOILER_FEATURE.STATE)), 1);
-  assert.equal(gladys.stateOf(ids.feature(BOILER_FEATURE.WATER_PRESSURE)), 1.3);
+test('the boiler publishes the outdoor temperature, the pressure and its activity', () => {
+  const { models } = build([tliSnapshotEntry()]);
+  assert.equal(stateOf(models, 'boiler:system-1:outdoor-temperature'), 8);
+  assert.equal(stateOf(models, 'boiler:system-1:outdoor-temperature-24h'), 11.3);
+  assert.equal(stateOf(models, 'boiler:system-1:water-pressure'), 1.3);
+  assert.equal(textOf(models, 'boiler:system-1:activity'), 'HEATING');
 });
 
-test('polling the boiler reports it idle when no circuit is producing', async () => {
-  const gladys = createFakeGladys();
-  const { client } = buildStubbedClient();
-  const ids = boilerIds(gladys, SYSTEM_ID);
-
-  await pollDevice(gladys, { external_id: ids.device }, { client, config });
-
-  assert.equal(gladys.stateOf(ids.feature(BOILER_FEATURE.STATE)), 0);
+test('a stopped system reports OFF rather than its last activity', () => {
+  const entry = tliSnapshotEntry();
+  entry.system.state.system.systemOff = true;
+  const { models } = build([entry]);
+  assert.equal(textOf(models, 'boiler:system-1:activity'), 'OFF');
 });
 
-// --- The integration's own refresh loop --------------------------------------
+test('fault codes are published as a count and as a readable detail', () => {
+  const { models } = build([vrc700SnapshotEntry()]);
+  assert.equal(stateOf(models, 'boiler:system-2:trouble-codes'), 1);
+  assert.equal(textOf(models, 'boiler:system-2:trouble-codes-detail'), 'F.28 Ignition failure');
 
-test('a refresh publishes every device of every zone in one API read', async () => {
-  const gladys = createFakeGladys();
-  const { client, calls } = buildStubbedClient({ raw: buildTwoZoneSystem() });
+  const { models: healthy } = build([tliSnapshotEntry()]);
+  assert.equal(stateOf(healthy, 'boiler:system-1:trouble-codes'), 0);
+  assert.equal(textOf(healthy, 'boiler:system-1:trouble-codes-detail'), 'OK');
+});
 
-  await refreshAllDevices(gladys, { client, config });
+test('the zone takes its name from the boiler and publishes its readings', () => {
+  const { models } = build([tliSnapshotEntry()]);
+  const zone = models.find((model) => model.externalId === 'zone:system-1-0');
+  assert.equal(zone.device.name, 'Maison – Salon');
+  assert.equal(stateOf(models, 'zone:system-1-0:temperature'), 19.3);
+  assert.equal(stateOf(models, 'zone:system-1-0:humidity'), 42);
+  // The manual setpoint of the fixture, not its instantaneous demand (20).
+  assert.equal(stateOf(models, 'zone:system-1-0:target-temperature'), 21);
+  assert.equal(stateOf(models, 'zone:system-1-0:mode'), THERMOSTAT_MODE.AUTO);
+  assert.equal(stateOf(models, 'zone:system-1-0:operating-state'), 1);
+});
 
-  const boilerFeatures = boilerIds(gladys, SYSTEM_ID);
-  const zone0 = thermostatIds(gladys, SYSTEM_ID, 0);
-  const zone1 = thermostatIds(gladys, SYSTEM_ID, 1);
+test('the setpoint published is the one the user edits, not the demand of the moment', () => {
+  // A real boiler reports desiredRoomTemperatureSetpoint = 0 whenever nothing
+  // is asked of the heating (scheduled zone outside its slots, summer mode).
+  // Publishing that would fill the input box with a 0 the boiler would refuse.
+  const entry = tliSnapshotEntry();
+  entry.system.state.zones[0].desiredRoomTemperatureSetpoint = 0;
+  entry.system.configuration.zones[0].heating.manualModeSetpointHeating = 19.5;
 
-  assert.equal(
-    gladys.stateOf(boilerFeatures.feature(BOILER_FEATURE.OUTDOOR_TEMPERATURE)),
-    4.0585938,
+  const { models } = build([entry]);
+  assert.equal(stateOf(models, 'zone:system-1-0:target-temperature'), 19.5);
+});
+
+test('a temporary override in force is what the setpoint shows', () => {
+  // While an override runs, the override temperature IS the setpoint applied,
+  // and the value the user just asked for.
+  const entry = tliSnapshotEntry();
+  entry.system.state.zones[0].currentSpecialFunction = 'QUICK_VETO';
+  entry.system.state.zones[0].desiredRoomTemperatureSetpoint = 22.5;
+
+  const { models } = build([entry]);
+  assert.equal(stateOf(models, 'zone:system-1-0:target-temperature'), 22.5);
+});
+
+test('a MiPro control publishes its comfort temperature as the setpoint', () => {
+  const { models } = build([vrc700SnapshotEntry()]);
+  // dayTemperatureHeating = 20, desiredRoomTemperatureSetpoint = 19.5.
+  assert.equal(stateOf(models, 'zone:system-2-0:target-temperature'), 20);
+});
+
+test('no setpoint is published when the boiler reports nothing usable', () => {
+  const entry = tliSnapshotEntry();
+  entry.system.state.zones[0].desiredRoomTemperatureSetpoint = 0;
+  delete entry.system.configuration.zones[0].heating.manualModeSetpointHeating;
+
+  const { models } = build([entry]);
+  // Nothing published at all: the feature keeps its previous value rather than
+  // showing a 0.
+  assert.equal(stateOf(models, 'zone:system-1-0:target-temperature'), undefined);
+});
+
+test('a zone without a humidity probe does not declare a humidity feature', () => {
+  const entry = tliSnapshotEntry();
+  delete entry.system.state.zones[0].currentRoomHumidity;
+  const { models } = build([entry]);
+  const zone = models.find((model) => model.externalId === 'zone:system-1-0');
+  const keys = zone.device.features.map((feature) => feature.external_id);
+  assert.ok(!keys.includes('zone:system-1-0:humidity'));
+});
+
+test('an inactive zone is skipped: it would only add a device that never reports', () => {
+  const entry = tliSnapshotEntry();
+  entry.system.properties.zones[0].isActive = false;
+  const { models } = build([entry]);
+  assert.ok(!models.some((model) => model.externalId.startsWith('zone:')));
+});
+
+test('the hot water device reads its setpoint range from the boiler', () => {
+  const { models } = build([tliSnapshotEntry()]);
+  const dhw = models.find((model) => model.externalId === 'hot-water:system-1-255');
+  const target = dhw.device.features.find((feature) =>
+    feature.external_id.endsWith(':target-temperature'),
   );
-  assert.equal(gladys.stateOf(zone0.feature(THERMOSTAT_FEATURE.TEMPERATURE)), 21.9125);
-  assert.equal(gladys.stateOf(zone1.feature(THERMOSTAT_FEATURE.TEMPERATURE)), 18.5);
-
-  // The snapshot cache must collapse the three device reads into one fetch.
-  assert.equal(calls.filter((call) => call.url.endsWith('/homes')).length, 1);
+  assert.equal(target.min, 35);
+  assert.equal(target.max, 65);
+  assert.equal(stateOf(models, 'hot-water:system-1-255:target-temperature'), 55);
+  assert.equal(stateOf(models, 'hot-water:system-1-255:mode'), WATER_HEATER_MODE.PROGRAM);
+  assert.equal(stateOf(models, 'hot-water:system-1-255:boost'), 0);
+  // The boiler is heating the house, not the water.
+  assert.equal(stateOf(models, 'hot-water:system-1-255:heating'), 0);
 });
 
-test('a steady refresh cycle costs one API call per installation', async () => {
-  const gladys = createFakeGladys();
-  const { client } = buildStubbedClient({ raw: buildTwoZoneSystem() });
-
-  // First cycle pays for the installation list and the controller family.
-  await refreshAllDevices(gladys, { client, config });
-
-  const before = client.requestCount;
-  await refreshAllDevices(gladys, { client, config });
-  assert.equal(
-    client.requestCount - before,
-    1,
-    'a cycle must read the system state and nothing else',
-  );
-
-  // And it stays flat, cycle after cycle.
-  await refreshAllDevices(gladys, { client, config });
-  assert.equal(client.requestCount - before, 2);
+test('a vrc700 installation is read despite its different payload shape', () => {
+  const { models } = build([vrc700SnapshotEntry()]);
+  const externalIds = models.map((model) => model.externalId);
+  assert.deepEqual(externalIds, [
+    'boiler:system-2',
+    'zone:system-2-0',
+    'circuit:system-2-0',
+    // Read from `domesticHotWater`, where the tli payload uses `dhw`.
+    'hot-water:system-2-255',
+  ]);
+  assert.equal(stateOf(models, 'zone:system-2-0:mode'), THERMOSTAT_MODE.AUTO);
+  assert.equal(stateOf(models, 'hot-water:system-2-255:mode'), WATER_HEATER_MODE.MANUAL);
+  assert.equal(stateOf(models, 'hot-water:system-2-255:boost'), 1);
+  assert.equal(stateOf(models, 'hot-water:system-2-255:heating'), 1);
+  assert.equal(stateOf(models, 'circuit:system-2-0:flow-temperature'), 32.5);
+  assert.equal(textOf(models, 'circuit:system-2-0:state'), 'STANDBY');
+  // STANDBY circuit -> the zone is idle.
+  assert.equal(stateOf(models, 'zone:system-2-0:operating-state'), 0);
 });
 
-test('discovery still refetches the installation list', async () => {
-  const gladys = createFakeGladys();
-  const { client, calls } = buildStubbedClient();
-
-  await refreshAllDevices(gladys, { client, config });
-  const homeCallsBefore = calls.filter((call) => call.url.endsWith('/homes')).length;
-
-  // A gateway paired since startup must show up, so discovery cannot answer
-  // from the long-lived cache.
-  await buildDiscoveredDevices(gladys, { client, config });
-
-  assert.equal(calls.filter((call) => call.url.endsWith('/homes')).length, homeCallsBefore + 1);
+test('two accounts on two installations produce two independent sets of devices', () => {
+  const { models } = build([tliSnapshotEntry(), vrc700SnapshotEntry()]);
+  const externalIds = models.map((model) => model.externalId);
+  assert.equal(new Set(externalIds).size, externalIds.length, 'external ids must be unique');
+  assert.ok(externalIds.includes('zone:system-1-0'));
+  assert.ok(externalIds.includes('zone:system-2-0'));
 });
 
-test('a refresh skips inactive zones', async () => {
-  const raw = buildTwoZoneSystem();
-  raw.properties.zones[1].isActive = false;
-
-  const gladys = createFakeGladys();
-  const { client } = buildStubbedClient({ raw });
-  await refreshAllDevices(gladys, { client, config });
-
-  const zone1 = thermostatIds(gladys, SYSTEM_ID, 1);
-  assert.equal(gladys.stateOf(zone1.feature(THERMOSTAT_FEATURE.TEMPERATURE)), undefined);
+test('statesOfDevice only returns the states of the requested device', () => {
+  const { models } = build([tliSnapshotEntry()]);
+  const states = statesOfDevice(models, 'zone:system-1-0');
+  assert.ok(states.length > 0);
+  for (const state of states) {
+    assert.ok(state.device_feature_external_id.startsWith('zone:system-1-0'));
+  }
+  assert.deepEqual(statesOfDevice(models, 'unknown:device'), []);
 });
 
-// --- Routing and commands ----------------------------------------------------
-
-test('a command reaches the zone its external id designates', async () => {
-  const gladys = createFakeGladys();
-  const { client, calls } = buildStubbedClient({ raw: buildTwoZoneSystem() });
-  const ids = thermostatIds(gladys, SYSTEM_ID, 1);
-
-  await setDeviceValue(
-    gladys,
-    {
-      device: { external_id: ids.device },
-      feature: { external_id: ids.feature(THERMOSTAT_FEATURE.TARGET_TEMPERATURE) },
-      value: 21,
-    },
-    { client, config },
-  );
-
-  const [write] = writeCalls(calls);
-  assert.match(write.url, /\/zones\/1\//, 'zone 1 must be the one written to');
-  assert.equal(gladys.stateOf(ids.feature(THERMOSTAT_FEATURE.TARGET_TEMPERATURE)), 21);
-});
-
-test('the heating switch publishes the state it applied', async () => {
-  const gladys = createFakeGladys();
-  const { client, calls } = buildStubbedClient();
-  const ids = thermostatIds(gladys, SYSTEM_ID, 0);
-
-  await setDeviceValue(
-    gladys,
-    {
-      device: { external_id: ids.device },
-      feature: { external_id: ids.feature(THERMOSTAT_FEATURE.HEATING) },
-      value: 0,
-    },
-    { client, config },
-  );
-
-  assert.deepEqual(writeCalls(calls)[0].body, { operationMode: 'OFF' });
-  assert.equal(gladys.stateOf(ids.feature(THERMOSTAT_FEATURE.HEATING)), 0);
-});
-
-test('the configured "heating on" mode is the one applied', async () => {
-  const gladys = createFakeGladys();
-  const { client, calls } = buildStubbedClient({
-    raw: buildRawSystem({ zoneHeating: { operationModeHeating: 'OFF' } }),
-  });
-  const ids = thermostatIds(gladys, SYSTEM_ID, 0);
-
-  await setDeviceValue(
-    gladys,
-    {
-      device: { external_id: ids.device },
-      feature: { external_id: ids.feature(THERMOSTAT_FEATURE.HEATING) },
-      value: 1,
-    },
-    { client, config: normalizeConfig({ ...config, heating_on_mode: 'MANUAL' }) },
-  );
-
-  assert.deepEqual(writeCalls(calls)[0].body, { operationMode: 'MANUAL' });
-});
-
-test('commanding a read-only boiler feature fails', async () => {
-  const gladys = createFakeGladys();
-  const { client } = buildStubbedClient();
-  const ids = boilerIds(gladys, SYSTEM_ID);
-
-  await assert.rejects(
-    () =>
-      setDeviceValue(
-        gladys,
-        {
-          device: { external_id: ids.device },
-          feature: { external_id: ids.feature(BOILER_FEATURE.STATE) },
-          value: 1,
-        },
-        { client, config },
-      ),
-    /read only/,
-  );
-});
-
-test('commanding an unknown thermostat feature fails', async () => {
-  const gladys = createFakeGladys();
-  const { client } = buildStubbedClient();
-  const ids = thermostatIds(gladys, SYSTEM_ID, 0);
-
-  await assert.rejects(
-    () =>
-      setDeviceValue(
-        gladys,
-        {
-          device: { external_id: ids.device },
-          feature: { external_id: ids.feature('temperature') },
-          value: 20,
-        },
-        { client, config },
-      ),
-    /cannot be controlled/,
-  );
-});
-
-test('a device that is not ours is rejected rather than mis-routed', () => {
-  assert.throws(() => routeDevice({ external_id: 'ext:other:plug:1' }), /Unknown device/);
+test('read-only features have no command handler', () => {
+  const { models } = build([tliSnapshotEntry()]);
+  assert.equal(findCommand(models, 'boiler:system-1:water-pressure'), null);
+  assert.equal(findCommand(models, 'circuit:system-1-0:flow-temperature'), null);
+  assert.ok(findCommand(models, 'zone:system-1-0:target-temperature'));
+  assert.ok(findCommand(models, 'hot-water:system-1-255:boost'));
 });

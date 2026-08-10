@@ -1,54 +1,59 @@
-// -----------------------------------------------------------------------------
-// Configuration normalization: the rest of the code must never see an
-// undefined, a string where a number is expected, or a country that would
-// build an unknown Keycloak realm.
-// -----------------------------------------------------------------------------
-
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_CONFIG, isConfigured, normalizeConfig } from '../src/config.js';
 
-test('an empty configuration falls back to the defaults', () => {
+test('normalizeConfig returns the defaults when called with no argument', () => {
   assert.deepEqual(normalizeConfig(), DEFAULT_CONFIG);
 });
 
-test('numbers arriving as strings from the form are coerced', () => {
+test('normalizeConfig keeps the user values over the defaults', () => {
+  const config = normalizeConfig({
+    email: 'user@example.com',
+    password: 's3cret',
+    country: 'spain',
+  });
+  assert.equal(config.email, 'user@example.com');
+  assert.equal(config.password, 's3cret');
+  assert.equal(config.country, 'spain');
+});
+
+test('normalizeConfig trims the email, which users paste with a trailing space', () => {
+  assert.equal(normalizeConfig({ email: '  user@example.com ' }).email, 'user@example.com');
+});
+
+test('normalizeConfig coerces the numbers coming from the form as strings', () => {
   const config = normalizeConfig({ poll_frequency: '600', quick_veto_duration: '1.5' });
   assert.equal(config.poll_frequency, 600);
   assert.equal(config.quick_veto_duration, 1.5);
+  assert.equal(typeof config.poll_frequency, 'number');
 });
 
-test('out-of-range numbers are brought back inside their bounds', () => {
+test('normalizeConfig clamps the numbers to the range of the manifest', () => {
   assert.equal(normalizeConfig({ poll_frequency: 5 }).poll_frequency, 60);
   assert.equal(normalizeConfig({ poll_frequency: 99999 }).poll_frequency, 3600);
   assert.equal(normalizeConfig({ quick_veto_duration: 0 }).quick_veto_duration, 0.5);
   assert.equal(normalizeConfig({ quick_veto_duration: 48 }).quick_veto_duration, 24);
 });
 
-test('unusable numbers fall back to the default instead of becoming NaN', () => {
-  assert.equal(normalizeConfig({ poll_frequency: 'often' }).poll_frequency, 300);
-});
-
-test('an unsupported country falls back to the default', () => {
-  assert.equal(normalizeConfig({ country: 'germany' }).country, 'france');
-  assert.equal(normalizeConfig({ country: 'spain' }).country, 'spain');
-});
-
-test('the email address is trimmed', () => {
-  assert.equal(normalizeConfig({ username: '  user@example.com ' }).username, 'user@example.com');
-});
-
-test('an unknown heating mode falls back to the weekly schedule', () => {
-  assert.equal(normalizeConfig({ heating_on_mode: 'BOOST' }).heating_on_mode, 'TIME_CONTROLLED');
-  assert.equal(normalizeConfig({ heating_on_mode: 'MANUAL' }).heating_on_mode, 'MANUAL');
-});
-
-test('isConfigured requires both an email address and a password', () => {
-  assert.equal(isConfigured(normalizeConfig()), false);
-  assert.equal(isConfigured(normalizeConfig({ username: 'user@example.com' })), false);
-  assert.equal(isConfigured(normalizeConfig({ password: 'secret' })), false);
+test('normalizeConfig falls back to the default for an unreadable number', () => {
   assert.equal(
-    isConfigured(normalizeConfig({ username: 'user@example.com', password: 'secret' })),
+    normalizeConfig({ poll_frequency: 'often' }).poll_frequency,
+    DEFAULT_CONFIG.poll_frequency,
+  );
+});
+
+test('normalizeConfig refuses a country that has no Saunier Duval realm', () => {
+  // A wrong country would silently build an invalid Keycloak realm and every
+  // login would fail with an opaque error.
+  assert.equal(normalizeConfig({ country: 'atlantis' }).country, DEFAULT_CONFIG.country);
+});
+
+test('isConfigured requires both an email and a password', () => {
+  assert.equal(isConfigured(normalizeConfig()), false);
+  assert.equal(isConfigured(normalizeConfig({ email: 'user@example.com' })), false);
+  assert.equal(isConfigured(normalizeConfig({ password: 's3cret' })), false);
+  assert.equal(
+    isConfigured(normalizeConfig({ email: 'user@example.com', password: 's3cret' })),
     true,
   );
 });

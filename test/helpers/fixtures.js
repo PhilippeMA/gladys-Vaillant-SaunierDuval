@@ -1,73 +1,140 @@
 // -----------------------------------------------------------------------------
-// Payloads mirroring what the myVAILLANT API returns for a Saunier Duval
-// installation. The shapes (key names, nesting, the 0.0 setpoint of a zone
-// asking for no heat) are the ones observed on real accounts.
+// Snapshot fixtures, shaped exactly like what `SaunierDuvalClient.getSnapshot()`
+// returns: the payloads below are trimmed copies of what the Saunier Duval
+// platform answers for a real installation.
 // -----------------------------------------------------------------------------
 
-export const SYSTEM_ID = '3692f21be10859c90ac96ada644badd442d5f9c2';
-
-/** One entry of GET /homes. */
-export const HOME = {
-  homeName: 'Maison',
-  serialNumber: '0b47906a466bc453826bc0cca27fad88dc08bcb6',
-  systemId: SYSTEM_ID,
-  productMetadata: { productType: 'MiGo Link', articleNumber: '0020260962' },
-  state: 'CLAIMED',
-  nomenclature: 'MiGo Link',
-  countryCode: 'FR',
-};
+/** A MiGo Link installation (tli): one zone, one circuit, one hot water circuit. */
+export function tliSnapshotEntry(overrides = {}) {
+  return {
+    home: { homeName: 'Maison', systemId: 'system-1', nomenclature: 'MiGo Link' },
+    systemId: 'system-1',
+    controlIdentifier: 'tli',
+    connected: true,
+    troubleCodes: [{ serialNumber: 'abc', articleNumber: '0010', codes: [] }],
+    system: {
+      state: {
+        system: {
+          outdoorTemperature: 8.019531,
+          outdoorTemperatureAverage24h: 11.300781,
+          systemWaterPressure: 1.3,
+          energyManagerState: 'HEATING',
+          systemOff: false,
+        },
+        zones: [
+          {
+            index: 0,
+            desiredRoomTemperatureSetpoint: 20.0,
+            desiredRoomTemperatureSetpointHeating: 20.0,
+            currentRoomTemperature: 19.2875,
+            currentRoomHumidity: 42.0,
+            currentSpecialFunction: 'NONE',
+          },
+        ],
+        circuits: [
+          {
+            index: 0,
+            circuitState: 'HEATING',
+            currentCircuitFlowTemperature: 46.0,
+            heatingCircuitFlowSetpoint: 47.00972,
+          },
+        ],
+        dhw: [{ index: 255, currentSpecialFunction: 'REGULAR', currentDhwTemperature: 43.0 }],
+      },
+      properties: {
+        system: { controllerType: 'MiGo Link' },
+        zones: [{ index: 0, isActive: true, associatedCircuitIndex: 0 }],
+        circuits: [{ index: 0, heatingCircuitType: 'DIRECT_HEATING_CIRCUIT' }],
+        dhw: [{ index: 255, minSetpoint: 35.0, maxSetpoint: 65.0 }],
+      },
+      configuration: {
+        zones: [
+          {
+            index: 0,
+            general: { name: 'Salon' },
+            heating: { operationModeHeating: 'TIME_CONTROLLED', manualModeSetpointHeating: 21.0 },
+          },
+        ],
+        circuits: [{ index: 0, heatingCurve: 1.2 }],
+        dhw: [{ index: 255, operationModeDhw: 'TIME_CONTROLLED', tappingSetpoint: 55.0 }],
+      },
+    },
+    ...overrides,
+  };
+}
 
 /**
- * Body of the system endpoint of a `tli` controller.
- * @param {object} [overrides] - Deep overrides, merged one level per block.
- * @returns {object} The raw system payload.
+ * An older MiPro / Exacontrol installation (vrc700). Note the hot water
+ * circuits under `domesticHotWater` instead of `dhw`, and the different mode
+ * vocabulary (DAY / AUTO / SET_BACK instead of MANUAL / TIME_CONTROLLED).
  */
-export function buildRawSystem(overrides = {}) {
+export function vrc700SnapshotEntry(overrides = {}) {
   return {
-    state: {
-      system: {
-        outdoorTemperature: 4.0585938,
-        systemWaterPressure: 1.3,
-        outdoorTemperatureAverage24h: 7.375,
-        ...overrides.systemState,
-      },
-      zones: [
-        {
-          index: 0,
-          desiredRoomTemperatureSetpointHeating: 20.0,
-          desiredRoomTemperatureSetpoint: 20.0,
-          currentRoomTemperature: 21.9125,
-          currentRoomHumidity: 42.0,
-          currentSpecialFunction: 'NONE',
-          heatingState: 'IDLE',
-          ...overrides.zoneState,
-        },
-      ],
-      circuits: [
-        {
-          index: 0,
-          circuitState: 'STANDBY',
-          currentCircuitFlowTemperature: 21.0,
-          ...overrides.circuitState,
-        },
-      ],
-    },
-    properties: {
-      zones: [{ index: 0, isActive: true, ...overrides.zoneProperties }],
-    },
-    configuration: {
-      zones: [
-        {
-          index: 0,
-          general: { name: 'Salon' },
-          heating: {
-            operationModeHeating: 'TIME_CONTROLLED',
-            setBackTemperature: 18.0,
-            manualModeSetpointHeating: 19.0,
-            ...overrides.zoneHeating,
+    home: { homeName: 'Chalet', systemId: 'system-2', nomenclature: 'MiGo' },
+    systemId: 'system-2',
+    controlIdentifier: 'vrc700',
+    connected: true,
+    troubleCodes: [
+      {
+        serialNumber: 'def',
+        articleNumber: '0020',
+        codes: [
+          {
+            code: 'F.28',
+            type: 'ERROR',
+            title: 'Ignition failure',
+            occurrenceTimestamp: '2026-01-02T03:04:05Z',
           },
+        ],
+      },
+    ],
+    system: {
+      state: {
+        system: {
+          outdoorTemperature: 6.875,
+          outdoorTemperatureAverage24h: 8.957031,
+          systemWaterPressure: 2.3,
+          energyManagerState: 'DHW',
+          systemOff: false,
         },
-      ],
+        zones: [
+          {
+            index: 0,
+            desiredRoomTemperatureSetpoint: 19.5,
+            currentRoomTemperature: 19.0625,
+            currentSpecialFunction: 'NONE',
+          },
+        ],
+        circuits: [
+          {
+            index: 0,
+            circuitState: 'STANDBY',
+            currentCircuitFlowTemperature: 32.5,
+            heatingCircuitFlowSetpoint: 32.544678,
+          },
+        ],
+        domesticHotWater: [
+          { index: 255, currentSpecialFunction: 'CYLINDER_BOOST', currentDhwTemperature: 51.0 },
+        ],
+      },
+      properties: {
+        system: { controllerType: 'VRC700' },
+        zones: [{ index: 0, isActive: true, associatedCircuitIndex: 0 }],
+        circuits: [{ index: 0 }],
+        domesticHotWater: [{ index: 255, minSetpoint: 40.0, maxSetpoint: 70.0 }],
+      },
+      configuration: {
+        zones: [
+          {
+            index: 0,
+            general: { name: 'Séjour' },
+            heating: { operationModeHeating: 'AUTO', dayTemperatureHeating: 20.0 },
+          },
+        ],
+        circuits: [{ index: 0 }],
+        domesticHotWater: [{ index: 255, operationModeDhw: 'DAY', tappingSetpoint: 60.0 }],
+      },
     },
+    ...overrides,
   };
 }

@@ -1,86 +1,67 @@
 // -----------------------------------------------------------------------------
 // Integration configuration.
 //
-// The values are filled in by the user in Gladys, from the `config_schema`
-// declared in `gladys-assistant-integration.json`. The SDK fetches them
-// (`gladys.getConfig()`) and notifies every change through
-// `gladys.onConfigUpdated()`.
-//
-// This module holds the defaults and normalizes the received object, so the
-// rest of the code never deals with `undefined` or with numbers arriving as
-// strings from the form.
+// Filled in by the user in Gladys, from the `config_schema` of
+// `gladys-assistant-integration.json`. The SDK fetches it (`getConfig()`) and
+// notifies every change (`onConfigUpdated()`); this module only provides the
+// defaults and normalizes the received object, so the rest of the code never
+// deals with `undefined` nor with a number arriving as a string.
 // -----------------------------------------------------------------------------
 
-import { COUNTRIES } from './api/constants.js';
+import { COUNTRIES, DEFAULT_COUNTRY } from './saunierDuval/const.js';
 
-/**
- * Defaults. They MUST stay consistent with the `default` values declared in the
- * `config_schema` of the manifest (a test enforces it). `password` is a
- * `secret` field, which the manifest is not allowed to give a default.
- */
+/** Defaults, kept consistent with the `default` values of the manifest. */
 export const DEFAULT_CONFIG = {
-  username: '',
+  email: '',
   password: '',
-  country: 'france',
-  heating_on_mode: 'TIME_CONTROLLED',
-  quick_veto_duration: 3,
+  country: DEFAULT_COUNTRY,
+  // The platform is rate limited and a boiler is a slow system: polling every
+  // 5 minutes is plenty, and keeps the account well away from any throttling.
   poll_frequency: 300,
+  // How long a temporary setpoint override lasts on a scheduled zone, in hours.
+  quick_veto_duration: 3,
 };
 
-/** Bounds also declared in the manifest, re-applied here against hand edits. */
+/** Bounds enforced by the manifest, re-applied here for the API path. */
 const LIMITS = {
-  quick_veto_duration: { min: 0.5, max: 24 },
   poll_frequency: { min: 60, max: 3600 },
+  quick_veto_duration: { min: 0.5, max: 24 },
 };
+
+function clampNumber(raw, fallback, { min, max }) {
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.min(Math.max(value, min), max);
+}
 
 /**
- * Merge the user configuration with the defaults and coerce the types.
- * @param {Record<string, unknown>} [raw] - Configuration returned by the SDK.
- * @returns {object} The normalized configuration.
+ * Merge the user configuration with the defaults.
+ * @param {Record<string, unknown>} raw configuration returned by the SDK
  */
 export function normalizeConfig(raw = {}) {
+  const country = COUNTRIES.includes(raw.country) ? raw.country : DEFAULT_CONFIG.country;
   return {
     ...DEFAULT_CONFIG,
     ...raw,
-    username: String(raw.username ?? DEFAULT_CONFIG.username).trim(),
+    email: String(raw.email ?? DEFAULT_CONFIG.email).trim(),
     password: String(raw.password ?? DEFAULT_CONFIG.password),
-    // An unknown country would build an unknown Keycloak realm and fail the
-    // login with a confusing 404.
-    country: COUNTRIES.includes(raw.country) ? raw.country : DEFAULT_CONFIG.country,
-    heating_on_mode: raw.heating_on_mode === 'MANUAL' ? 'MANUAL' : 'TIME_CONTROLLED',
-    quick_veto_duration: bounded(
-      raw.quick_veto_duration,
-      DEFAULT_CONFIG.quick_veto_duration,
-      LIMITS.quick_veto_duration,
-    ),
-    poll_frequency: bounded(
+    country,
+    poll_frequency: clampNumber(
       raw.poll_frequency,
       DEFAULT_CONFIG.poll_frequency,
       LIMITS.poll_frequency,
     ),
+    quick_veto_duration: clampNumber(
+      raw.quick_veto_duration,
+      DEFAULT_CONFIG.quick_veto_duration,
+      LIMITS.quick_veto_duration,
+    ),
   };
 }
 
-/**
- * Whether the integration has everything it needs to talk to the cloud.
- * @param {object} config - Normalized configuration.
- * @returns {boolean} True when credentials are set.
- */
+/** Is the configuration complete enough to try to log in? */
 export function isConfigured(config) {
-  return Boolean(config.username && config.password);
-}
-
-/**
- * Coerce a value to a number inside its bounds, falling back to the default.
- * @param {unknown} value - Raw value.
- * @param {number} fallback - Default value.
- * @param {{min: number, max: number}} limits - Accepted range.
- * @returns {number} The bounded number.
- */
-function bounded(value, fallback, { min, max }) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  return Math.min(max, Math.max(min, parsed));
+  return Boolean(config.email && config.password);
 }

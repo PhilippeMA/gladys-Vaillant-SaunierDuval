@@ -1,191 +1,198 @@
 // -----------------------------------------------------------------------------
 // Entry point of the Saunier Duval integration for Gladys Assistant.
 //
-// Role of this file: wire the SDK to the API client and to the device registry.
-// It holds no heating logic — reading and writing lives in src/api/, mapping to
-// Gladys devices in src/devices/. Here we only:
-//   1. instantiate the SDK (connection, auth, reconnection: handled for us);
-//   2. register the event handlers BEFORE connect();
-//   3. keep one API client alive, rebuilt whenever the credentials change.
+// This file only wires the SDK to the boiler: it holds no protocol logic. The
+// cloud API lives in src/saunierDuval/, the translation into Gladys devices in
+// src/devices/.
 //
 // Environment variables injected by the Gladys supervisor into the container:
 //   - GLADYS_HOST_API_URL         (host API URL)
 //   - GLADYS_INTEGRATION_TOKEN    (integration-scoped JWT)
 //   - GLADYS_INTEGRATION_SELECTOR (integration identifier)
-// The SDK reads them automatically: `new GladysIntegration()` is enough.
+// The SDK reads them by itself: `new GladysIntegration()` is enough.
 // -----------------------------------------------------------------------------
 
 import { GladysIntegration, logger } from '@gladysassistant/integration-sdk';
 import { isConfigured, normalizeConfig } from './src/config.js';
-import { SaunierDuvalClient } from './src/api/client.js';
-import { AuthenticationFailedError } from './src/api/auth.js';
 import {
-  buildDiscoveredDevices,
-  pollDevice,
-  refreshAllDevices,
-  setDeviceValue,
+  buildDeviceModels,
+  findCommand,
+  statesOfDevice,
+  toDiscoveredDevices,
+  toStateBatches,
+  toStates,
 } from './src/devices/index.js';
-import { testConnection } from './src/actions.js';
-
-/**
- * Lifetime of the shared system snapshot, in seconds. All the devices of an
- * installation are polled at nearly the same time and read the same payload:
- * this window collapses that burst into a single call to a rate-limited cloud.
- */
-const SNAPSHOT_CACHE_TTL = 20;
+import { AuthenticationError, SaunierDuvalClient } from './src/saunierDuval/client.js';
 
 const gladys = new GladysIntegration();
 
+/** Current configuration, hot-reloaded through onConfigUpdated. */
 let config = normalizeConfig();
+
+/** Client of the Saunier Duval platform, rebuilt whenever credentials change. */
 let client = null;
 
-// Timer of the integration's own refresh loop (see refreshAllDevices).
-let refreshTimer = null;
+/** Device models of the last snapshot, and the snapshot they were built from. */
+let models = [];
+let modelsSnapshot = null;
 
 /**
- * Return the API client, building it on first use. Returns null while the user
- * has not filled in the credentials yet.
- * @returns {SaunierDuvalClient|null} The client, or null.
+ * Signature of the device list last published, so an unchanged list is not
+ * re-sent on every cycle. Cleared whenever the core may have forgotten it
+ * (reconnection) or the list may change (new configuration).
  */
-function getClient() {
-  if (!isConfigured(config)) {
-    return null;
-  }
-  client = client ?? buildClient();
-  return client;
+let publishedDevicesSignature = null;
+
+/**
+ * Handle of the refresh loop.
+ *
+ * The integration drives its own refresh instead of relying on the Gladys
+ * poller: the core only knows a fixed set of poll frequencies (1 s to 1 min),
+ * and a boiler is read every few minutes — a rhythm that list cannot express.
+ * The loop is also what makes the integration self-healing: a cycle that fails
+ * (wrong credentials, platform down) is simply retried at the next tick.
+ */
+let refreshTimer = null;
+
+/** Messages shown in the Configuration screen when we cannot reach the boiler. */
+const STATUS = {
+  NOT_CONFIGURED: {
+    en: 'Enter the email and password of your MiGo / MiGo Link account.',
+    fr: 'Renseignez l’e-mail et le mot de passe de votre compte MiGo / MiGo Link.',
+  },
+  AUTH_FAILED: {
+    en: 'Login refused: check the email, the password and the country of the account.',
+    fr: 'Connexion refusée : vérifiez l’e-mail, le mot de passe et le pays du compte.',
+  },
+  UNREACHABLE: {
+    en: 'Saunier Duval platform unreachable, see the integration logs.',
+    fr: 'Plateforme Saunier Duval injoignable, consultez les logs de l’intégration.',
+  },
+};
+
+/** (Re)build the client for the current credentials. */
+function rebuildClient() {
+  client = new SaunierDuvalClient({
+    email: config.email,
+    password: config.password,
+    country: config.country,
+  });
+  models = [];
+  modelsSnapshot = null;
+  publishedDevicesSignature = null;
 }
 
 /**
- * Build a client from the current configuration.
- * @returns {SaunierDuvalClient} The client.
+ * Device models for the current state of the boiler.
+ *
+ * The snapshot is cached by the client, so everything that happens inside one
+ * cycle — the loop tick, a device Gladys polls itself, a command looking up
+ * its handler — shares ONE read of the boiler. The models are rebuilt only
+ * when the snapshot actually changed (reference comparison).
+ *
+ * @param {{ force?: boolean }} options re-read everything, metadata included
  */
-function buildClient() {
-  logger.info(`Using the Saunier Duval account ${config.username} (${config.country})`);
-  return new SaunierDuvalClient({
-    username: config.username,
-    password: config.password,
-    country: config.country,
-    cacheTtl: SNAPSHOT_CACHE_TTL,
+async function getModels({ force = false } = {}) {
+  if (!client) {
+    rebuildClient();
+  }
+  const snapshot = await client.getSnapshot({
+    // Half the refresh interval: fresh enough for anything happening within a
+    // cycle, without a second round trip for the next caller of the same cycle.
+    maxAgeMs: Math.max(30_000, (config.poll_frequency * 1000) / 2),
+    force,
+  });
+  if (snapshot !== modelsSnapshot) {
+    models = buildDeviceModels(gladys, snapshot, config);
+    modelsSnapshot = snapshot;
+  }
+  return models;
+}
+
+/** Publish the devices and their current state, and report the status. */
+async function refreshEverything({ force = false } = {}) {
+  if (!isConfigured(config)) {
+    logger.warn('Integration not configured yet: waiting for the credentials');
+    await gladys.setConnectionStatus(false, STATUS.NOT_CONFIGURED);
+    return [];
+  }
+
+  const currentModels = await getModels({ force });
+
+  // The device LIST only changes when the installation itself changes (a zone
+  // added, a gateway paired). Re-publishing an identical list every cycle just
+  // makes the core re-validate the same payload, so we publish it when it
+  // actually differs — and always on the first cycle after a (re)connection,
+  // since the core keeps the discovered devices in memory only.
+  const signature = JSON.stringify(toDiscoveredDevices(currentModels));
+  if (signature !== publishedDevicesSignature) {
+    await gladys.publishDiscoveredDevices(toDiscoveredDevices(currentModels));
+    publishedDevicesSignature = signature;
+    // Logged at info: "devices published: 0" is the first thing to look for
+    // when the Discovery screen stays empty.
+    logger.info(`Devices published: ${currentModels.length}`);
+  }
+
+  const states = toStates(currentModels);
+  for (const batch of toStateBatches(states)) {
+    await gladys.publishStates(batch);
+  }
+  logger.debug(`States published: ${states.length}`);
+
+  await reportGatewayStatus();
+  return currentModels;
+}
+
+/**
+ * Report the application-level status from what the last snapshot already told
+ * us. The platform flags a gateway it stopped hearing from as OFFLINE; when
+ * that happens the values we publish are the last ones it knew, which is worth
+ * saying rather than showing a healthy integration serving frozen readings.
+ */
+async function reportGatewayStatus() {
+  const offline = (modelsSnapshot ?? []).filter((entry) => entry.online === false);
+  if (offline.length === 0) {
+    await gladys.setConnectionStatus(true);
+    return;
+  }
+  const names = offline.map((entry) => entry.home?.homeName ?? entry.systemId).join(', ');
+  await gladys.setConnectionStatus(false, {
+    en: `Gateway offline (${names}): the values shown are the last ones known.`,
+    fr: `Passerelle hors ligne (${names}) : les valeurs affichées sont les dernières connues.`,
   });
 }
 
-/**
- * Return the client or fail loudly: used by the handlers that cannot do
- * anything useful without credentials.
- * @returns {SaunierDuvalClient} The client.
- */
-function requireClient() {
-  const current = getClient();
-  if (!current) {
-    throw new Error('The Saunier Duval account is not configured yet');
-  }
-  return current;
+/** Turn any failure into the right message under the Configuration screen. */
+async function reportFailure(err) {
+  const message = err instanceof AuthenticationError ? STATUS.AUTH_FAILED : STATUS.UNREACHABLE;
+  logger.error('Could not talk to the Saunier Duval platform', err);
+  await gladys.setConnectionStatus(false, message).catch(() => {});
 }
 
-// --- Discovery: Gladys asks for the list of devices --------------------------
-gladys.onScanRequest(async () => {
-  logger.info('onScanRequest -> reading the Saunier Duval account');
-  await publishDevices();
-});
-
-// --- Command: the user acts on a controllable feature ------------------------
-gladys.onSetValue(async (device, feature, value) => {
-  logger.info(`onSetValue <- ${feature.external_id} = ${value}`);
-  // Throwing acks the command as failed, and Gladys shows the failure.
-  await setDeviceValue(gladys, { device, feature, value }, { client: requireClient(), config });
-});
-
-// --- Polling: Gladys asks to refresh a device --------------------------------
-// The devices declare no `poll_frequency` (Gladys caps its intervals at one
-// minute, see src/devices/thermostat.js), so this fires only on an on-demand
-// refresh; the periodic reads come from the loop below.
-gladys.onPoll(async (device) => {
-  await pollDevice(gladys, device, { client: requireClient(), config });
-});
-
-// --- Manifest actions: buttons in the Configuration screen -------------------
-gladys.onAction('test_connection', () => testConnection(requireClient()));
-
-// --- Configuration updated by the user ---------------------------------------
-gladys.onConfigUpdated(async (newConfig) => {
-  logger.info('onConfigUpdated -> new configuration received');
-  config = normalizeConfig(newConfig);
-  // The credentials, the country or the polling interval may have changed:
-  // start from a clean client rather than reusing a session opened with the
-  // previous account.
-  client = null;
-  await initialize();
-});
-
-// --- Connection lifecycle ----------------------------------------------------
-// The SDK logs the WebSocket lifecycle itself (connections, disconnections,
-// reconnection attempts) under the `gladys-sdk` name, so this handler only runs
-// the integration's own (re)initialization.
-gladys.on('connected', async () => {
+/** One refresh cycle that never throws: failures are reported, not fatal. */
+async function runRefresh({ force = false } = {}) {
   try {
-    config = normalizeConfig(await gladys.getConfig());
+    return await refreshEverything({ force });
   } catch (err) {
-    logger.error('Could not read the integration configuration', err);
-    return;
-  }
-  await initialize();
-});
-
-// Publishing states over a closed socket only produces noise: the loop restarts
-// from the 'connected' handler once the SDK has reconnected.
-gladys.on('disconnected', () => {
-  stopRefreshLoop();
-});
-
-/**
- * (Re)publish the devices and report the application-level status shown in the
- * Configuration screen. Distinct from the container state machine: the
- * integration can be running and still unable to reach the Saunier Duval cloud.
- */
-async function initialize() {
-  if (!isConfigured(config)) {
-    logger.warn('Waiting for the Saunier Duval credentials to be filled in');
-    await setStatus(false, {
-      en: 'Fill in the email address and the password of your MiGo account.',
-      fr: "Renseignez l'adresse e-mail et le mot de passe de votre compte MiGo.",
-    });
-    return;
-  }
-
-  try {
-    await publishDevices();
-    await setStatus(true);
-    // Publish a first set of values immediately, so the devices the user
-    // creates are not empty until the first tick.
-    await refreshStates();
-    startRefreshLoop();
-  } catch (err) {
-    logger.error('Initialization failed', err);
-    stopRefreshLoop();
-    await setStatus(false, statusMessage(err));
+    await reportFailure(err);
+    return null;
   }
 }
 
 /**
- * Read the whole account and publish every value, logging but swallowing
- * failures: a cloud hiccup must not kill the timer.
+ * (Re)start the refresh loop at the interval chosen by the user.
+ *
+ * A tick reads the boiler but NOT the metadata (list of installations, fault
+ * codes): those live on their own slower cache in the client, so a steady
+ * cycle costs one HTTP request per installation.
  */
-async function refreshStates() {
-  try {
-    await refreshAllDevices(gladys, { client: requireClient(), config });
-  } catch (err) {
-    logger.error('Refreshing the Saunier Duval values failed', err);
-  }
-}
-
-/** (Re)start the refresh loop at the interval chosen by the user. */
 function startRefreshLoop() {
   stopRefreshLoop();
-  logger.info(`Refreshing the values every ${config.poll_frequency}s`);
-  refreshTimer = setInterval(refreshStates, config.poll_frequency * 1000);
+  refreshTimer = setInterval(() => {
+    runRefresh();
+  }, config.poll_frequency * 1000);
 }
 
-/** Stop the refresh loop, if it runs. */
 function stopRefreshLoop() {
   if (refreshTimer) {
     clearInterval(refreshTimer);
@@ -193,49 +200,125 @@ function stopRefreshLoop() {
   }
 }
 
-/**
- * Read the account and publish everything it contains.
- * `publishDiscoveredDevices` is idempotent (upsert by external_id), so calling
- * it again after a configuration change is safe.
- */
-async function publishDevices() {
-  const devices = await buildDiscoveredDevices(gladys, { client: requireClient(), config });
-  await gladys.publishDiscoveredDevices(devices);
-}
+// --- Discovery: Gladys asks for the list of devices --------------------------
+// Full refresh rather than a bare re-publish: the user clicking "scan" wants
+// the current state of the boiler, and a failure must be visible in the
+// Configuration screen instead of dying silently inside the handler.
+gladys.onScanRequest(async () => {
+  logger.info('onScanRequest -> reading the installation');
+  // `force`: the user may have just added a zone or paired a gateway, so this
+  // is the moment to drop the metadata cache and re-read everything.
+  await runRefresh({ force: true });
+});
 
-/**
- * Report the connection status, never letting a reporting failure mask the
- * error that caused it.
- * @param {boolean} connected - Whether the cloud is reachable.
- * @param {object} [message] - Multi-language explanation.
- */
-async function setStatus(connected, message) {
-  await gladys.setConnectionStatus(connected, message).catch((err) => {
-    logger.error('Could not report the connection status', err);
-  });
-}
+// --- Polling: Gladys asks to refresh one device ------------------------------
+gladys.onPoll(async (device) => {
+  const currentModels = await getModels();
+  const states = statesOfDevice(currentModels, device.external_id);
+  if (states.length === 0) {
+    logger.debug(`onPoll: nothing to publish for ${device.external_id}`);
+    return;
+  }
+  await gladys.publishStates(states);
+});
 
-/**
- * Turn an initialization failure into something actionable for the user.
- * @param {Error} err - The failure.
- * @returns {{en: string, fr: string}} The message shown in the Configuration screen.
- */
-function statusMessage(err) {
-  if (err instanceof AuthenticationFailedError) {
+// --- Command: the user acts on a controllable feature ------------------------
+gladys.onSetValue(async (device, feature, value) => {
+  logger.info(`onSetValue <- ${feature.external_id} = ${value}`);
+  const currentModels = await getModels();
+  const command = findCommand(currentModels, feature.external_id);
+  if (!command) {
+    // Throwing makes the SDK acknowledge the command as failed, and Gladys
+    // shows the failure instead of pretending the boiler obeyed.
+    throw new Error(`No command handler for ${feature.external_id}`);
+  }
+
+  await command(client, value);
+
+  // The boiler applies the order asynchronously and the platform can take a
+  // few seconds to report it back. We publish the requested value so the UI
+  // stays responsive, and invalidate the cache so the next poll republishes
+  // what the boiler actually confirms.
+  await gladys.publishState(feature.external_id, value);
+  client.invalidateSnapshot();
+});
+
+// --- Configuration updated by the user ---------------------------------------
+gladys.onConfigUpdated(async (newConfig) => {
+  logger.info('onConfigUpdated -> new configuration received');
+  config = normalizeConfig(newConfig);
+  // Credentials, country or refresh interval may have changed: start over.
+  rebuildClient();
+  await runRefresh({ force: true });
+  // The interval itself may have changed: re-arm the loop on the new value.
+  startRefreshLoop();
+});
+
+// --- Manifest actions: buttons in the Configuration screen -------------------
+gladys.onAction('test_connection', async () => {
+  if (!isConfigured(config)) {
+    return STATUS.NOT_CONFIGURED;
+  }
+  if (!client) {
+    rebuildClient();
+  }
+  const snapshot = await client.getSnapshot({ force: true });
+  if (snapshot.length === 0) {
     return {
-      en: 'Login refused: check the email address, the password and the country of your MiGo account.',
-      fr: "Connexion refusée : vérifiez l'adresse e-mail, le mot de passe et le pays de votre compte MiGo.",
+      en: 'Connected, but no boiler is attached to this account.',
+      fr: 'Connexion réussie, mais aucune chaudière n’est rattachée à ce compte.',
     };
   }
+  // A successful test must leave the integration working, not just say that it
+  // could: publish the devices and restart the loop right away, so the user
+  // does not have to save the configuration again to see anything.
+  const currentModels = await refreshEverything({ force: false });
+  startRefreshLoop();
+
+  const names = snapshot.map((entry) => entry.home.homeName ?? entry.systemId).join(', ');
   return {
-    en: 'Could not reach the Saunier Duval cloud, check the integration logs.',
-    fr: "Impossible de joindre le cloud Saunier Duval, consultez les logs de l'intégration.",
+    en: `Connected: ${snapshot.length} installation(s), ${currentModels.length} device(s) available (${names}).`,
+    fr: `Connexion réussie : ${snapshot.length} installation(s), ${currentModels.length} appareil(s) disponible(s) (${names}).`,
   };
-}
+});
+
+gladys.onAction('refresh', async () => {
+  if (!isConfigured(config)) {
+    return STATUS.NOT_CONFIGURED;
+  }
+  const currentModels = await refreshEverything({ force: true });
+  return {
+    en: `${currentModels.length} device(s) refreshed.`,
+    fr: `${currentModels.length} appareil(s) actualisé(s).`,
+  };
+});
+
+// --- Connection lifecycle ----------------------------------------------------
+// The SDK logs the WebSocket lifecycle itself (under the `gladys-sdk` name):
+// this handler only runs our own (re)initialization.
+gladys.on('connected', async () => {
+  try {
+    config = normalizeConfig(await gladys.getConfig());
+    rebuildClient();
+  } catch (err) {
+    await reportFailure(err);
+  }
+  // The core keeps the discovered devices in memory only: a reconnection means
+  // it may have forgotten them, so the next refresh must publish the list even
+  // if it did not change.
+  publishedDevicesSignature = null;
+  // Outside the try: even a first cycle that fails must leave the loop armed,
+  // otherwise a boiler that is briefly unreachable at startup would never come
+  // back without the user touching the configuration.
+  await runRefresh({ force: true });
+  startRefreshLoop();
+});
+
+gladys.on('disconnected', () => {
+  stopRefreshLoop();
+});
 
 // --- Graceful shutdown -------------------------------------------------------
-// The SDK disconnects cleanly and exits with code 0 when the supervisor stops
-// the container (SIGTERM/SIGINT).
 gladys.handleShutdown((signal) => {
   logger.info(`Received ${signal} -> graceful shutdown`);
   stopRefreshLoop();
