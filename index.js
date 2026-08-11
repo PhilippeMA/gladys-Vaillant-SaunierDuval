@@ -17,6 +17,7 @@ import { isConfigured, normalizeConfig } from './src/config.js';
 import {
   buildDeviceModels,
   findCommand,
+  seedOverrideDurationsFromDevices,
   statesOfDevice,
   toDiscoveredDevices,
   toStateBatches,
@@ -169,6 +170,21 @@ async function reportFailure(err) {
   await gladys.setConnectionStatus(false, message).catch(() => {});
 }
 
+/**
+ * Read back the override durations Gladys already holds for our zones. A
+ * failure here is not worth a visible error: the configured default applies.
+ */
+async function restoreOverrideDurations() {
+  try {
+    const restored = seedOverrideDurationsFromDevices(await gladys.getDevices());
+    if (restored > 0) {
+      logger.debug(`Override durations restored: ${restored}`);
+    }
+  } catch (err) {
+    logger.debug('Could not read back the override durations', err.message);
+  }
+}
+
 /** One refresh cycle that never throws: failures are reported, not fatal. */
 async function runRefresh({ force = false } = {}) {
   try {
@@ -307,6 +323,10 @@ gladys.on('connected', async () => {
   // it may have forgotten them, so the next refresh must publish the list even
   // if it did not change.
   publishedDevicesSignature = null;
+  // The override durations the user chose live in this process; Gladys kept
+  // their last value, so read them back before the first refresh republishes
+  // them — a restart must not silently fall back to the configured default.
+  await restoreOverrideDurations();
   // Outside the try: even a first cycle that fails must leave the loop armed,
   // otherwise a boiler that is briefly unreachable at startup would never come
   // back without the user touching the configuration.

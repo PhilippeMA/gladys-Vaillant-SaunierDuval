@@ -160,6 +160,7 @@ const RENDERABLE_PAIRS = new Set([
   'thermostat/target-temperature',
   'thermostat/mode',
   'thermostat/operating-state',
+  'duration/decimal',
   'water-heater/target-temperature',
   'water-heater/mode',
   'water-heater/boost',

@@ -98,12 +98,12 @@
       "key": "quick_veto_duration",
       "type": "number",
       "label": {
-        "en": "Temporary override duration (h)",
-        "fr": "Durée du forçage temporaire (h)"
+        "en": "Default override duration (h)",
+        "fr": "Durée de forçage par défaut (h)"
       },
       "description": {
-        "en": "When a zone follows its schedule, changing its temperature starts a temporary override that expires after this many hours, and the schedule takes over again.",
-        "fr": "Lorsqu'une zone suit son programme horaire, changer sa température déclenche un forçage temporaire qui expire au bout de ce nombre d'heures, puis le programme reprend la main."
+        "en": "When a zone follows its schedule, changing its temperature starts a temporary override, after which the schedule takes over again. This is the duration a zone starts from: each zone then carries its own \"Override duration\" control, from 30 minutes to 24 hours in 30-minute steps. Half-hours only.",
+        "fr": "Lorsqu'une zone suit son programme horaire, changer sa température déclenche un forçage temporaire, puis le programme reprend la main. Ceci est la durée initiale d'une zone : chaque zone dispose ensuite de sa propre commande « Durée du forçage », de 30 minutes à 24 heures par pas de 30 minutes. Demi-heures uniquement."
       },
       "required": false,
       "default": 3,

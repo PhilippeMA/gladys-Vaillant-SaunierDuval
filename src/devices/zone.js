@@ -14,6 +14,10 @@
 //     official application does when you turn the dial on a scheduled zone.
 //   - zone off      -> nothing to write, the command is refused with a clear
 //     message rather than silently ignored.
+//
+// How long that override lasts is a control of its own — the application asks
+// for it every time, from 30 minutes to 24 hours in 30-minute steps. See
+// overrideDuration.js.
 // -----------------------------------------------------------------------------
 
 import {
@@ -24,6 +28,12 @@ import {
 } from '@gladysassistant/integration-sdk';
 import { ZONE_SPECIAL_FUNCTIONS } from '../saunierDuval/const.js';
 import { numericStates, round1, systemLabel } from './helpers.js';
+import {
+  MAX_OVERRIDE_MINUTES,
+  MIN_OVERRIDE_MINUTES,
+  getOverrideMinutes,
+  setOverrideMinutes,
+} from './overrideDuration.js';
 import {
   THERMOSTAT_MODE,
   circuitStateToOperatingState,
@@ -44,6 +54,7 @@ const FEATURE = {
   TARGET_TEMPERATURE: 'target-temperature',
   MODE: 'mode',
   OPERATING_STATE: 'operating-state',
+  OVERRIDE_DURATION: 'override-duration',
 };
 
 /** Range accepted by the boiler for a room setpoint. */
@@ -176,6 +187,24 @@ export function buildZoneDevice(gladys, entry, index, config) {
       has_feedback: false,
       keep_history: true,
     },
+    {
+      // How long the next temporary override will last. In MINUTES: the Gladys
+      // slider steps by one unit, so hours would put every half-hour out of
+      // reach — and half-hours are exactly the granularity the Saunier Duval
+      // application offers.
+      name: 'Override duration',
+      external_id: ids.feature(FEATURE.OVERRIDE_DURATION),
+      category: DEVICE_FEATURE_CATEGORIES.DURATION,
+      type: DEVICE_FEATURE_TYPES.DURATION.DECIMAL,
+      unit: DEVICE_FEATURE_UNITS.MINUTES,
+      min: MIN_OVERRIDE_MINUTES,
+      max: MAX_OVERRIDE_MINUTES,
+      read_only: false,
+      // Nothing to confirm on the boiler: this is a setting of the integration,
+      // applied to the next override.
+      has_feedback: false,
+      keep_history: false,
+    },
   ];
 
   // Only the zones whose thermostat measures humidity report it: declaring the
@@ -213,6 +242,9 @@ export function buildZoneDevice(gladys, entry, index, config) {
       zoneModeToGladys(entry.controlIdentifier, heating.operationModeHeating),
     ],
     [ids.feature(FEATURE.OPERATING_STATE), circuitStateToOperatingState(circuit.circuitState)],
+    // Republished every cycle so the control always shows what the next
+    // override will actually use.
+    [ids.feature(FEATURE.OVERRIDE_DURATION), getOverrideMinutes(ids.device, config)],
   ]);
 
   /** Everything a command needs to address this zone on the platform. */
@@ -229,11 +261,20 @@ export function buildZoneDevice(gladys, entry, index, config) {
     states,
     commands: {
       [ids.feature(FEATURE.TARGET_TEMPERATURE)]: (client, value) =>
-        setTargetTemperature(client, target, heating.operationModeHeating, value, config, zoneName),
+        setTargetTemperature(client, target, heating.operationModeHeating, value, {
+          zoneName,
+          overrideMinutes: getOverrideMinutes(ids.device, config),
+        }),
       // `async` on purpose: an unsupported mode must come back as a rejected
       // promise, like every other command failure, not as a synchronous throw.
       [ids.feature(FEATURE.MODE)]: async (client, value) =>
         client.setZoneOperatingMode(target, zoneModeToPlatform(entry.controlIdentifier, value)),
+      // Nothing leaves for the boiler: the duration is a parameter of the NEXT
+      // override, which the platform only accepts alongside the temperature.
+      [ids.feature(FEATURE.OVERRIDE_DURATION)]: async (client, value) => {
+        const minutes = setOverrideMinutes(ids.device, value);
+        logger.info(`${zoneName}: next override will last ${minutes} min`);
+      },
     },
   };
 }
@@ -241,14 +282,19 @@ export function buildZoneDevice(gladys, entry, index, config) {
 /**
  * Apply a new setpoint, with the write the current mode calls for.
  * Exported for the unit tests.
+ *
+ * @param {object} client the Saunier Duval client
+ * @param {object} target `{ systemId, controlIdentifier, index, currentSpecialFunction }`
+ * @param {string} operationMode the mode the zone currently runs in
+ * @param {number} temperature the requested setpoint
+ * @param {{ zoneName?: string, overrideMinutes: number }} options
  */
 export async function setTargetTemperature(
   client,
   target,
   operationMode,
   temperature,
-  config,
-  zoneName = 'zone',
+  { zoneName = 'zone', overrideMinutes } = {},
 ) {
   const { controlIdentifier } = target;
 
@@ -258,9 +304,11 @@ export async function setTargetTemperature(
   }
 
   if (operationMode === zoneScheduledMode(controlIdentifier)) {
-    const duration = config.quick_veto_duration;
-    logger.info(`${zoneName}: temporary override -> ${temperature} °C for ${duration} h`);
-    return client.setZoneQuickVeto(target, temperature, duration);
+    // The platform takes the duration in hours; the control is in minutes so
+    // half-hours stay reachable.
+    const hours = overrideMinutes / 60;
+    logger.info(`${zoneName}: temporary override -> ${temperature} °C for ${overrideMinutes} min`);
+    return client.setZoneQuickVeto(target, temperature, hours);
   }
 
   // OFF, holiday, or any mode the boiler does not let us write a setpoint in.

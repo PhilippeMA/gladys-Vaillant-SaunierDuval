@@ -30,8 +30,9 @@ import { createLogger } from '@gladysassistant/integration-sdk';
 import { dhwSection } from '../saunierDuval/client.js';
 import { buildCircuitDevice } from './circuit.js';
 import { buildDomesticHotWaterDevice } from './domesticHotWater.js';
+import { seedOverrideMinutes } from './overrideDuration.js';
 import { buildSystemDevice } from './system.js';
-import { buildZoneDevice } from './zone.js';
+import { ZONE_FEATURES, buildZoneDevice } from './zone.js';
 
 const logger = createLogger({ name: 'devices' });
 
@@ -76,6 +77,33 @@ export function buildDeviceModels(gladys, snapshot, config) {
 /** Discovery payload of every device. */
 export function toDiscoveredDevices(models) {
   return models.map((model) => model.device);
+}
+
+/**
+ * Restore the override durations from the devices Gladys already holds.
+ *
+ * The duration a user picked is a setting of the integration, not a register
+ * of the boiler, so a restarted container would otherwise fall back to the
+ * configured default while the interface still displayed the chosen value.
+ * Gladys keeps the last value of the feature, so we read it back from there.
+ *
+ * @param {Array} devices as returned by `gladys.getDevices()`
+ * @returns {number} how many durations were restored
+ */
+export function seedOverrideDurationsFromDevices(devices) {
+  let restored = 0;
+  for (const device of devices ?? []) {
+    for (const feature of device.features ?? []) {
+      if (!feature.external_id?.endsWith(`:${ZONE_FEATURES.OVERRIDE_DURATION}`)) {
+        continue;
+      }
+      if (Number.isFinite(Number(feature.last_value))) {
+        seedOverrideMinutes(device.external_id, feature.last_value);
+        restored += 1;
+      }
+    }
+  }
+  return restored;
 }
 
 /** States of every device. */

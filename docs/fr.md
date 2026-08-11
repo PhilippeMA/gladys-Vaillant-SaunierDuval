@@ -33,7 +33,8 @@ Vous n'avez rien à installer sur la chaudière, ni à demander de clé d'API.
      chaudière est interrogée. 300 s (5 minutes) est un bon réglage — une
      chaudière est un système lent, et la plateforme Saunier Duval limite le
      nombre d'appels ;
-   - **Durée du forçage temporaire** : voir « Changer une température » plus bas.
+   - **Durée de forçage par défaut** : la durée d'où part chaque zone. Vous la
+     réglez ensuite zone par zone, voir « Changer une température » plus bas.
 3. Cliquez sur **Tester la connexion**. Le message vous indique le nombre
    d'installations trouvées sur votre compte.
 4. Ouvrez l'onglet **Appareils** de l'intégration : vos appareils y sont déjà
@@ -46,7 +47,7 @@ Pour chaque installation, l'intégration crée :
 | Appareil                                 | Ce qu'il expose                                                                                                                                                                           |
 | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Chaudière**                            | Température extérieure (instantanée et moyenne 24 h), pression d'eau du circuit de chauffage, activité en cours (chauffage, eau chaude, veille), nombre de codes de défaut et leur détail |
-| **Zone** (une par zone de chauffage)     | Température ambiante, humidité (si votre thermostat la mesure), consigne de température, mode, et si le chauffage tourne actuellement                                                     |
+| **Zone** (une par zone de chauffage)     | Température ambiante, humidité (si votre thermostat la mesure), consigne de température, mode, durée du forçage, et si le chauffage tourne actuellement                                   |
 | **Circuit** (un par circuit hydraulique) | Température de départ réellement produite, consigne de départ calculée par la loi d'eau, état du circuit                                                                                  |
 | **Eau chaude**                           | Température de l'eau, consigne, mode, bouton **Boost**, et si la chaudière est en train de chauffer l'eau                                                                                 |
 
@@ -71,14 +72,32 @@ La chaudière n'a pas une consigne unique : ce qui est écrit dépend du mode da
 lequel se trouve la zone.
 
 - **Zone en mode programmé** (« Auto ») : changer la température déclenche un
-  **forçage temporaire**. La nouvelle consigne s'applique pendant la durée
-  configurée (3 h par défaut), puis le programme horaire reprend la main.
-  C'est exactement ce que fait l'application mobile quand vous tournez la
-  molette sur une zone programmée : votre programmation n'est jamais écrasée.
+  **forçage temporaire**. La nouvelle consigne s'applique pendant la durée que
+  vous avez choisie, puis le programme horaire reprend la main. C'est
+  exactement ce que fait l'application mobile quand vous tournez la molette sur
+  une zone programmée : votre programmation n'est jamais écrasée.
 - **Zone en mode manuel** : la consigne est écrite durablement, jusqu'au
   prochain changement.
 - **Zone à l'arrêt** : la commande est refusée avec un message clair. Changez
   d'abord le mode de la zone.
+
+### Durée du forçage
+
+Chaque zone porte une commande **« Durée du forçage »**, réglable de **30
+minutes à 24 heures**, comme dans l'application. Vous la réglez avant de
+changer la température : c'est cette durée que le forçage suivant utilisera.
+
+Elle est exprimée en **minutes** et non en heures, pour une raison précise : le
+curseur de Gladys avance par pas d'une unité, donc en heures les demi-heures
+seraient hors d'atteinte. En minutes, toutes les valeurs de l'application
+restent accessibles. Une valeur qui ne tombe pas juste est ramenée à la
+demi-heure la plus proche (100 minutes → 1 h 30), exactement comme le fait la
+chaudière.
+
+Cette commande ne parle pas à la chaudière : la plateforme n'accepte la durée
+qu'au moment où le forçage démarre, avec la température. C'est donc un réglage
+de l'intégration, que Gladys mémorise et qui est relu après un redémarrage. La
+valeur de départ d'une zone est celle de l'écran de configuration.
 
 ### Correspondance des modes
 

@@ -32,7 +32,8 @@ Nothing to install on the boiler, no API key to request.
    - **Refresh interval**: how often, in seconds, the boiler is read. 300 s
      (5 minutes) is a good setting — a boiler is a slow system, and the
      Saunier Duval platform limits the number of calls;
-   - **Temporary override duration**: see "Changing a temperature" below.
+   - **Default override duration**: the duration every zone starts from. You
+     then set it per zone, see "Changing a temperature" below.
 3. Click **Test the connection**. The message tells you how many installations
    were found on your account.
 4. Open the **Devices** tab of the integration: your devices are already
@@ -45,7 +46,7 @@ For each installation, the integration creates:
 | Device                                  | What it exposes                                                                                                                                                |
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Boiler**                              | Outdoor temperature (current and 24 h average), heating water pressure, current activity (heating, hot water, standby), number of fault codes and their detail |
-| **Zone** (one per heating zone)         | Room temperature, humidity (if your thermostat measures it), target temperature, mode, and whether it is heating right now                                     |
+| **Zone** (one per heating zone)         | Room temperature, humidity (if your thermostat measures it), target temperature, mode, override duration, and whether it is heating right now                  |
 | **Circuit** (one per hydraulic circuit) | Flow temperature actually produced, flow setpoint computed by the heating curve, circuit state                                                                 |
 | **Hot water**                           | Water temperature, setpoint, mode, a **Boost** button, and whether the boiler is heating the water                                                             |
 
@@ -69,14 +70,31 @@ The boiler has no single setpoint register: what gets written depends on the
 mode the zone runs in.
 
 - **Zone on a schedule** ("Auto"): changing the temperature starts a
-  **temporary override**. The new setpoint applies for the configured duration
-  (3 h by default), then the schedule takes over again. This is exactly what
-  the mobile application does when you turn the dial on a scheduled zone: your
-  schedule is never overwritten.
+  **temporary override**. The new setpoint applies for the duration you chose,
+  then the schedule takes over again. This is exactly what the mobile
+  application does when you turn the dial on a scheduled zone: your schedule is
+  never overwritten.
 - **Zone in manual mode**: the setpoint is written for good, until you change
   it again.
 - **Zone switched off**: the command is refused with a clear message. Change
   the mode of the zone first.
+
+### Override duration
+
+Every zone carries an **"Override duration"** control, adjustable from
+**30 minutes to 24 hours**, like the application. Set it before changing the
+temperature: that is the duration the next override will use.
+
+It is expressed in **minutes** rather than hours, for a precise reason: the
+Gladys slider steps by one unit, so hours would put every half-hour out of
+reach. In minutes, every value of the application stays reachable. A value that
+does not fall on a step is brought back to the nearest half-hour (100 minutes →
+1 h 30), exactly as the boiler does.
+
+This control does not talk to the boiler: the platform only accepts the
+duration when the override starts, alongside the temperature. It is therefore a
+setting of the integration, which Gladys stores and which is read back after a
+restart. A zone starts from the value of the configuration screen.
 
 ### Mode mapping
 

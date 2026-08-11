@@ -18,22 +18,29 @@ export const DEFAULT_CONFIG = {
   // The platform is rate limited and a boiler is a slow system: polling every
   // 5 minutes is plenty, and keeps the account well away from any throttling.
   poll_frequency: 300,
-  // How long a temporary setpoint override lasts on a scheduled zone, in hours.
+  // DEFAULT duration of a temporary override on a scheduled zone, in hours —
+  // the value a zone starts from. Each zone then carries its own "Override
+  // duration" control, like the Saunier Duval application asks for it every
+  // time. See src/devices/overrideDuration.js.
   quick_veto_duration: 3,
 };
 
 /** Bounds enforced by the manifest, re-applied here for the API path. */
 const LIMITS = {
   poll_frequency: { min: 60, max: 3600 },
-  quick_veto_duration: { min: 0.5, max: 24 },
+  // Same range as the application: 30 minutes to 24 hours.
+  quick_veto_duration: { min: 0.5, max: 24, step: 0.5 },
 };
 
-function clampNumber(raw, fallback, { min, max }) {
+function clampNumber(raw, fallback, { min, max, step }) {
   const value = Number(raw);
   if (!Number.isFinite(value)) {
     return fallback;
   }
-  return Math.min(Math.max(value, min), max);
+  // A number field cannot declare a step in the manifest, so a user can type
+  // 1.7 h; the boiler works in half-hours, so we land on one.
+  const stepped = step ? Math.round(value / step) * step : value;
+  return Math.min(Math.max(stepped, min), max);
 }
 
 /**
