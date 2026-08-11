@@ -1,6 +1,6 @@
 {
   "name": "gladys-vaillant-saunierduval",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Gladys Assistant integration for Saunier Duval boilers, through the MiGo / MiGo Link cloud.",
   "type": "module",

@@ -6,16 +6,21 @@
     "en": "Control your Saunier Duval boiler through your MiGo / MiGo Link account.",
     "fr": "Pilotez votre chaudière Saunier Duval via votre compte MiGo / MiGo Link."
   },
-  "version": "1.0.0",
-  "docker_image": "ghcr.io/philippema/gladys-vaillant-saunierduval:1.0.0",
+  "version": "1.0.1",
+  "docker_image": "ghcr.io/philippema/gladys-vaillant-saunierduval:1.0.1",
   "gladys_version": ">=4.85.0",
   "cover_image": "https://raw.githubusercontent.com/PhilippeMA/gladys-Vaillant-SaunierDuval/main/cover.png",
-  "transports": ["cloud"],
+  "transports": [
+    "cloud"
+  ],
   "config_schema": [
     {
       "key": "intro",
       "type": "section",
-      "label": { "en": "Getting started", "fr": "Pour commencer" },
+      "label": {
+        "en": "Getting started",
+        "fr": "Pour commencer"
+      },
       "description": {
         "en": "Use the email and password of the MiGo or MiGo Link account you already use in the mobile application. Your boiler must be connected through a MiGo or MiGo Link gateway: everything goes through the Saunier Duval cloud, there is no local access.",
         "fr": "Utilisez l'e-mail et le mot de passe du compte MiGo ou MiGo Link dont vous vous servez déjà dans l'application mobile. Votre chaudière doit être reliée à une passerelle MiGo ou MiGo Link : tout passe par le cloud Saunier Duval, il n'y a pas d'accès local."
@@ -33,18 +38,27 @@
     {
       "key": "email",
       "type": "string",
-      "label": { "en": "Email", "fr": "E-mail" },
+      "label": {
+        "en": "Email",
+        "fr": "E-mail"
+      },
       "description": {
         "en": "Email address of your MiGo / MiGo Link account.",
         "fr": "Adresse e-mail de votre compte MiGo / MiGo Link."
       },
-      "placeholder": { "en": "you@example.com", "fr": "vous@exemple.com" },
+      "placeholder": {
+        "en": "you@example.com",
+        "fr": "vous@exemple.com"
+      },
       "required": true
     },
     {
       "key": "password",
       "type": "secret",
-      "label": { "en": "Password", "fr": "Mot de passe" },
+      "label": {
+        "en": "Password",
+        "fr": "Mot de passe"
+      },
       "description": {
         "en": "Password of your MiGo / MiGo Link account. Stored encrypted by Gladys and never sent back to the browser.",
         "fr": "Mot de passe de votre compte MiGo / MiGo Link. Stocké chiffré par Gladys et jamais renvoyé au navigateur."
@@ -54,7 +68,10 @@
     {
       "key": "country",
       "type": "select",
-      "label": { "en": "Country of the account", "fr": "Pays du compte" },
+      "label": {
+        "en": "Country of the account",
+        "fr": "Pays du compte"
+      },
       "description": {
         "en": "The country you registered your account in. An account created in France cannot log in through another country.",
         "fr": "Le pays dans lequel votre compte a été créé. Un compte créé en France ne peut pas se connecter via un autre pays."
@@ -62,20 +79,104 @@
       "required": true,
       "default": "france",
       "options": [
-        { "value": "france", "label": { "en": "France", "fr": "France" } },
-        { "value": "austria", "label": { "en": "Austria", "fr": "Autriche" } },
-        { "value": "czechrepublic", "label": { "en": "Czechia", "fr": "Tchéquie" } },
-        { "value": "finland", "label": { "en": "Finland", "fr": "Finlande" } },
-        { "value": "greece", "label": { "en": "Greece", "fr": "Grèce" } },
-        { "value": "hungary", "label": { "en": "Hungary", "fr": "Hongrie" } },
-        { "value": "italy", "label": { "en": "Italy", "fr": "Italie" } },
-        { "value": "lithuania", "label": { "en": "Lithuania", "fr": "Lituanie" } },
-        { "value": "luxembourg", "label": { "en": "Luxembourg", "fr": "Luxembourg" } },
-        { "value": "poland", "label": { "en": "Poland", "fr": "Pologne" } },
-        { "value": "portugal", "label": { "en": "Portugal", "fr": "Portugal" } },
-        { "value": "romania", "label": { "en": "Romania", "fr": "Roumanie" } },
-        { "value": "slovakia", "label": { "en": "Slovakia", "fr": "Slovaquie" } },
-        { "value": "spain", "label": { "en": "Spain", "fr": "Espagne" } }
+        {
+          "value": "france",
+          "label": {
+            "en": "France",
+            "fr": "France"
+          }
+        },
+        {
+          "value": "austria",
+          "label": {
+            "en": "Austria",
+            "fr": "Autriche"
+          }
+        },
+        {
+          "value": "czechrepublic",
+          "label": {
+            "en": "Czechia",
+            "fr": "Tchéquie"
+          }
+        },
+        {
+          "value": "finland",
+          "label": {
+            "en": "Finland",
+            "fr": "Finlande"
+          }
+        },
+        {
+          "value": "greece",
+          "label": {
+            "en": "Greece",
+            "fr": "Grèce"
+          }
+        },
+        {
+          "value": "hungary",
+          "label": {
+            "en": "Hungary",
+            "fr": "Hongrie"
+          }
+        },
+        {
+          "value": "italy",
+          "label": {
+            "en": "Italy",
+            "fr": "Italie"
+          }
+        },
+        {
+          "value": "lithuania",
+          "label": {
+            "en": "Lithuania",
+            "fr": "Lituanie"
+          }
+        },
+        {
+          "value": "luxembourg",
+          "label": {
+            "en": "Luxembourg",
+            "fr": "Luxembourg"
+          }
+        },
+        {
+          "value": "poland",
+          "label": {
+            "en": "Poland",
+            "fr": "Pologne"
+          }
+        },
+        {
+          "value": "portugal",
+          "label": {
+            "en": "Portugal",
+            "fr": "Portugal"
+          }
+        },
+        {
+          "value": "romania",
+          "label": {
+            "en": "Romania",
+            "fr": "Roumanie"
+          }
+        },
+        {
+          "value": "slovakia",
+          "label": {
+            "en": "Slovakia",
+            "fr": "Slovaquie"
+          }
+        },
+        {
+          "value": "spain",
+          "label": {
+            "en": "Spain",
+            "fr": "Espagne"
+          }
+        }
       ]
     },
     {
