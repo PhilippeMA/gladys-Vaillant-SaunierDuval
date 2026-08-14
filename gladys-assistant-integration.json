@@ -6,12 +6,16 @@
     "en": "Control your Saunier Duval boiler through your MiGo / MiGo Link account.",
     "fr": "Pilotez votre chaudière Saunier Duval via votre compte MiGo / MiGo Link."
   },
-  "version": "1.0.1",
-  "docker_image": "ghcr.io/philippema/gladys-vaillant-saunierduval:1.0.1",
+  "version": "1.0.2",
+  "docker_image": "ghcr.io/philippema/gladys-vaillant-saunierduval:1.0.2",
   "gladys_version": ">=4.86.0",
   "cover_image": "https://raw.githubusercontent.com/PhilippeMA/gladys-Vaillant-SaunierDuval/main/cover.png",
-  "categories": ["climate"],
-  "transports": ["cloud"],
+  "categories": [
+    "climate"
+  ],
+  "transports": [
+    "cloud"
+  ],
   "config_schema": [
     {
       "key": "intro",
