@@ -25,6 +25,32 @@ test('every manifest action is registered by the entry point', () => {
   }
 });
 
+test('declaring catalog categories requires Gladys >= 4.86.0', () => {
+  // The vocabulary itself is checked by the store validator (unknown keys are
+  // dropped with a warning there) — what this pins is the coupling rule: older
+  // cores reject any unknown manifest field, so a manifest declaring
+  // `categories` must not claim compatibility below the release accepting it.
+  assert.ok(
+    manifest.categories.length >= 1 && manifest.categories.length <= 3,
+    'the catalog accepts 1 to 3 categories',
+  );
+  const minVersion = manifest.gladys_version.match(/>=\s*(\d+)\.(\d+)\.\d+/);
+  assert.ok(minVersion, 'gladys_version must declare a minimum version');
+  const [, major, minor] = minVersion.map(Number);
+  assert.ok(
+    major > 4 || (major === 4 && minor >= 86),
+    `categories requires gladys_version >= 4.86.0, got "${manifest.gladys_version}"`,
+  );
+});
+
+test('the catalog categories say what this integration actually does', () => {
+  // A boiler: heating zones, hot water, setpoints and modes. The store lists
+  // the comparable cloud-connected boilers (De Dietrich, Daikin) under
+  // `climate` alone, and its own fallback file already classifies this
+  // repository that way — the manifest now says so itself.
+  assert.deepEqual(manifest.categories, ['climate']);
+});
+
 test('config_schema defaults stay consistent with DEFAULT_CONFIG', () => {
   for (const field of manifest.config_schema) {
     if (field.default !== undefined) {
