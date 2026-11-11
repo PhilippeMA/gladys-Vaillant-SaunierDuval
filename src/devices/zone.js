@@ -255,10 +255,28 @@ export function buildZoneDevice(gladys, entry, index, config) {
     currentSpecialFunction: zone.state.currentSpecialFunction,
   };
 
+  const operationMode = heating.operationModeHeating;
+  const overrideRunning = zone.state.currentSpecialFunction === ZONE_SPECIAL_FUNCTIONS.QUICK_VETO;
+
   return {
+    kind: DEVICE_TYPE,
+    systemId: entry.systemId,
     externalId: ids.device,
     device,
     states,
+    // What the scenes and the dashboard widget read, already decoded.
+    info: {
+      name: zoneName,
+      temperature: round1(zone.state.currentRoomTemperature),
+      targetTemperature: readTargetTemperature(zone),
+      mode: zoneModeToGladys(entry.controlIdentifier, operationMode),
+      heating: circuitStateToOperatingState(circuit.circuitState) === 1,
+      // An override only makes sense on a zone that has a schedule to go back to.
+      scheduled: operationMode === zoneScheduledMode(entry.controlIdentifier),
+      overrideRunning,
+      target,
+      features: { targetTemperature: ids.feature(FEATURE.TARGET_TEMPERATURE) },
+    },
     commands: {
       [ids.feature(FEATURE.TARGET_TEMPERATURE)]: (client, value) =>
         setTargetTemperature(client, target, heating.operationModeHeating, value, {

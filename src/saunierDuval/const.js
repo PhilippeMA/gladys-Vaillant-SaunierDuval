@@ -105,6 +105,7 @@ export const ZONE_SPECIAL_FUNCTIONS = {
   QUICK_VETO: 'QUICK_VETO',
   HOLIDAY: 'HOLIDAY',
   SYSTEM_OFF: 'SYSTEM_OFF',
+  VENTILATION_BOOST: 'VENTILATION_BOOST',
 };
 
 /** Special function reported by the hot water circuit. */

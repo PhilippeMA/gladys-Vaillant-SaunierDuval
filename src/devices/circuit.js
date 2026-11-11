@@ -88,7 +88,14 @@ export function buildCircuitDevice(gladys, entry, index) {
     ...textStates([[ids.feature(FEATURE.STATE), state.circuitState ?? null]]),
   ];
 
-  return { externalId: ids.device, device, states, commands: {} };
+  return {
+    kind: DEVICE_TYPE,
+    systemId: entry.systemId,
+    externalId: ids.device,
+    device,
+    states,
+    commands: {},
+  };
 }
 
 export { DEVICE_TYPE as CIRCUIT_DEVICE_TYPE, FEATURE as CIRCUIT_FEATURES };

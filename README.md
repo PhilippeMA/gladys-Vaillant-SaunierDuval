@@ -3,7 +3,8 @@
 External integration bringing a **Saunier Duval** boiler into
 [Gladys Assistant](https://gladysassistant.com): heating zones, hydraulic
 circuits and domestic hot water, read and controlled through the
-**MiGo / MiGo Link** cloud.
+**MiGo / MiGo Link** cloud — with a dashboard widget, scene triggers and scene
+actions. Requires Gladys Assistant **5.1.0** or newer.
 
 Built on the official
 [`@gladysassistant/integration-sdk`](https://github.com/GladysAssistant/integration-sdk-js),
@@ -19,12 +20,20 @@ Devices are **discovered**, not hard-coded: the integration reads the
 installation and creates what is actually there — one zone or four, a hot water
 tank or a combi boiler, one direct circuit or several.
 
-| Device          | Features                                                                                                                  |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Boiler          | Outdoor temperature + 24 h average, heating water pressure, current activity, fault code count and detail                 |
-| Heating zone    | Room temperature, room humidity (when measured), target temperature **(command)**, mode **(command)**, heating/idle state |
-| Heating circuit | Flow temperature, flow setpoint, circuit state                                                                            |
-| Hot water       | Water temperature, setpoint **(command)**, mode **(command)**, boost **(command)**, heating state                         |
+| Device          | Features                                                                                                                                                   |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Boiler          | Outdoor temperature + 24 h average, heating water pressure, current activity, fault code count and detail, ventilation boost **(command)**                 |
+| Heating zone    | Room temperature, room humidity (when measured), target temperature **(command)**, mode **(command)**, override duration **(command)**, heating/idle state |
+| Heating circuit | Flow temperature, flow setpoint, circuit state                                                                                                             |
+| Hot water       | Water temperature, setpoint **(command)**, mode **(command)**, boost **(command)**, heating state                                                          |
+
+Beyond devices, the manifest declares:
+
+| Kind           | Keys                                                                    | Code                                         |
+| -------------- | ----------------------------------------------------------------------- | -------------------------------------------- |
+| Scene triggers | `fault_detected`, `faults_cleared`, `gateway_offline`, `gateway_online` | [`src/sceneEvents.js`](./src/sceneEvents.js) |
+| Scene actions  | `start_override`, `cancel_override`                                     | [`src/scenes.js`](./src/scenes.js)           |
+| Widget         | `boiler`                                                                | [`src/widgets.js`](./src/widgets.js)         |
 
 ## How it talks to the boiler
 
@@ -43,8 +52,9 @@ Group.
 
 ```
 .
-├─ index.js                          # SDK bootstrap + event wiring (no protocol logic)
+├─ index.js                          # starts: SDK client, createApp, connect
 ├─ src/
+│  ├─ app.js                         # ← the integration: handlers, refresh loop, command read-back
 │  ├─ saunierDuval/                  # ← the cloud API
 │  │  ├─ const.js                    #   endpoints, realms, controller families
 │  │  ├─ altcha.js                   #   proof-of-work solver required by the login page
@@ -56,16 +66,23 @@ Group.
 │  │  ├─ zone.js                     #   heating zone (thermostat)
 │  │  ├─ circuit.js                  #   hydraulic circuit
 │  │  ├─ domesticHotWater.js         #   hot water (water heater)
+│  │  ├─ overrideDuration.js         #   per-zone duration of the temporary override
 │  │  ├─ mappings.js                 #   boiler vocabulary <-> Gladys enumerations
 │  │  └─ helpers.js                  #   rounding, state batches
+│  ├─ sceneEvents.js                 # scene triggers: what changed between two readings
+│  ├─ scenes.js                      # scene actions
+│  ├─ widgets.js                     # dashboard widget
 │  └─ config.js                      # config defaults + normalization
+├─ test/                             # node --test; the whole app on the SDK's fake Gladys
 ├─ docs/en.md, docs/fr.md            # user documentation, re-hosted by Gladys
-├─ gladys-assistant-integration.json # manifest (name, config schema, image…)
+├─ gladys-assistant-integration.json # manifest (config schema, scenes, widgets, image…)
+├─ CHANGELOG.md                      # what changed; feeds the GitHub Release notes
+├─ CLAUDE.md                         # project rules for contributors and coding assistants
 ├─ Dockerfile                        # Node 24 Alpine, read-only rootfs ready
-└─ .github/workflows/                # CI, multi-arch build, UI-driven release
+└─ .github/                          # CI, multi-arch build, UI-driven release, Dependabot
 ```
 
-Four design points worth knowing before you edit:
+Design points worth knowing before you edit:
 
 - **One HTTP request per cycle, per installation.** The platform is rate
   limited and shared with the mobile application, so the read is tiered: the
@@ -87,6 +104,16 @@ Four design points worth knowing before you edit:
   and rejects the _whole_ discovery payload on any other value — a boiler read
   every few minutes cannot be expressed there at all. `onPoll` stays wired for
   users who enable core polling by hand on a device.
+- **A command is read back.** After a write, the requested value is published
+  at once, then a single debounced read a few seconds later publishes what the
+  boiler actually kept — instead of waiting for the next cycle.
+- **Events are transitions.** Scene triggers compare two readings
+  ([`src/sceneEvents.js`](./src/sceneEvents.js)): the first reading after a
+  start only sets the baseline, so a fault that lasts does not fire on every
+  restart.
+- **The widget never calls the platform.** It is built from the last reading
+  and nudged (`requestWidgetRefresh`) after each new one: ten open dashboards
+  cost nothing.
 - **The setpoint write depends on the mode.** A scheduled zone gets a
   _temporary override_ (quick veto) instead of a permanent setpoint, so the
   user's schedule is never silently overwritten. See
@@ -121,7 +148,14 @@ npm test               # unit tests, via the built-in `node --test` runner
 
 Tests cover the parts where a silent mistake would be expensive: the mode
 mapping, which endpoint each command hits on each controller family, the
-discovery of a real installation payload, and the login proof of work.
+discovery of a real installation payload, the login proof of work, and the
+request budget. The whole integration also runs on the SDK's fake Gladys
+(`@gladysassistant/integration-sdk/testing`, see
+[`test/helpers/app.js`](./test/helpers/app.js)), which refuses what the real
+host API refuses: discovery, states, scene events, scene actions and the widget
+are checked end to end, without a network. `test/manifest.test.js` ties the
+manifest to the code — every declared key has a handler, and the other way
+round.
 
 ## Validate before publishing
 
@@ -134,10 +168,13 @@ availability, cover image, code rules — and reports every problem at once.
 
 ## Release
 
-**Actions → Release → Run workflow**, pick `patch`, `minor` or `major`. The
-workflow bumps the version everywhere (`package.json` + manifest
-`version`/`docker_image`), pushes the `vX.Y.Z` tag and builds the
-`linux/amd64` + `linux/arm64` image to `ghcr.io`.
+Describe every user-visible change under `## [Unreleased]` in
+[`CHANGELOG.md`](./CHANGELOG.md) as you make it. Then **Actions → Release → Run
+workflow**, pick `patch`, `minor` or `major`. The workflow bumps the version
+everywhere (`package.json` + manifest `version`/`docker_image`), moves the
+Unreleased section under the new version, pushes the `vX.Y.Z` tag, builds the
+`linux/amd64` + `linux/arm64` image to `ghcr.io` and publishes a GitHub Release
+with those notes. Never edit a version by hand.
 
 ## License
 

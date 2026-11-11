@@ -22,10 +22,10 @@ import {
   resetOverrideDurations,
 } from '../src/devices/overrideDuration.js';
 import { SaunierDuvalClient } from '../src/saunierDuval/client.js';
-import { createFakeGladys } from './helpers/fakeGladys.js';
+import { createFakeGladys, id } from './helpers/fakeGladys.js';
 import { tliSnapshotEntry } from './helpers/fixtures.js';
 
-const ZONE = 'zone:system-1-0';
+const ZONE = id('zone:system-1-0');
 const DURATION_FEATURE = `${ZONE}:override-duration`;
 const TEMPERATURE_FEATURE = `${ZONE}:target-temperature`;
 
@@ -151,7 +151,7 @@ test('each zone keeps its own duration', async () => {
 
   assert.equal(getOverrideMinutes(ZONE, config), 60);
   // Untouched zone: still on the configured default.
-  assert.equal(getOverrideMinutes('zone:system-1-1', config), 180);
+  assert.equal(getOverrideMinutes(id('zone:system-1-1'), config), 180);
 });
 
 test('a restart restores the duration Gladys kept, not the default', () => {

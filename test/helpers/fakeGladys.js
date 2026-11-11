@@ -1,46 +1,23 @@
 // -----------------------------------------------------------------------------
-// Minimal in-memory stand-in for the Gladys SDK object, for unit tests.
+// The Gladys the tests run against: the fake one shipped with the SDK.
 //
-// It reproduces the only surface the device modules rely on:
-//   - externalIds(type, platformId) -> { device, feature(key) }
-//   - publishState / publishStates   -> record calls so tests can assert them
-//   - setConnectionStatus            -> record calls so tests can assert them
-// This lets us test the pure "wiring" logic (discovery payloads, dispatch)
-// without a running Gladys server or a real WebSocket.
+// It is a REAL GladysIntegration — same methods, same argument checks — over
+// an in-memory Gladys that validates what it receives like the host API does:
+// a discovery list or a state the real Gladys would refuse is refused here
+// too, with the same 400. A hand-written stand-in accepted anything, which is
+// how a `poll_frequency` in seconds once reached production.
+//
+// External ids therefore carry the real prefix, `ext:<selector>:`. `id()`
+// builds one, so the tests read `id('zone:system-1-0:mode')`.
 // -----------------------------------------------------------------------------
 
-export function createFakeGladys() {
-  const published = [];
-  const connectionStatuses = [];
+import { createFakeGladys as createSdkFakeGladys } from '@gladysassistant/integration-sdk/testing';
 
-  return {
-    published,
-    connectionStatuses,
+export const SELECTOR = 'test-integration';
 
-    externalIds(type, platformId) {
-      const device = `${type}:${platformId}`;
-      return {
-        device,
-        feature: (key) => `${device}:${key}`,
-      };
-    },
+/** External id of a device or a feature, as Gladys knows it. */
+export const id = (suffix) => `ext:${SELECTOR}:${suffix}`;
 
-    async publishState(featureExternalId, state) {
-      published.push({ featureExternalId, state });
-    },
-
-    async publishStates(states) {
-      for (const s of states) {
-        published.push({
-          featureExternalId: s.device_feature_external_id,
-          state: s.state,
-          text: s.text,
-        });
-      }
-    },
-
-    async setConnectionStatus(connected, message) {
-      connectionStatuses.push({ connected, message });
-    },
-  };
+export function createFakeGladys(options = {}) {
+  return createSdkFakeGladys({ selector: SELECTOR, ...options });
 }

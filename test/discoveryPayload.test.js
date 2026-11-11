@@ -156,6 +156,7 @@ const RENDERABLE_PAIRS = new Set([
   'humidity-sensor/decimal',
   'pressure-sensor/decimal',
   'counter-sensor/integer',
+  'switch/binary',
   'text/text',
   'thermostat/target-temperature',
   'thermostat/mode',

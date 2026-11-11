@@ -13,7 +13,7 @@ import { normalizeConfig } from '../src/config.js';
 import { buildDeviceModels, findCommand } from '../src/devices/index.js';
 import { THERMOSTAT_MODE, WATER_HEATER_MODE } from '../src/devices/mappings.js';
 import { SaunierDuvalClient } from '../src/saunierDuval/client.js';
-import { createFakeGladys } from './helpers/fakeGladys.js';
+import { createFakeGladys, id } from './helpers/fakeGladys.js';
 import { tliSnapshotEntry, vrc700SnapshotEntry } from './helpers/fixtures.js';
 
 const config = normalizeConfig({
@@ -52,7 +52,7 @@ test('setting a temperature on a scheduled zone starts a temporary override', as
   // The zone of the fixture is in TIME_CONTROLLED: writing a permanent
   // setpoint would silently defeat the schedule the user configured.
   const { client, calls } = recordingClient();
-  await commandFor(tliSnapshotEntry(), 'zone:system-1-0:target-temperature')(client, 21);
+  await commandFor(tliSnapshotEntry(), id('zone:system-1-0:target-temperature'))(client, 21);
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].method, 'POST');
@@ -67,7 +67,7 @@ test('an override already running is extended, not restarted', async () => {
   const entry = tliSnapshotEntry();
   entry.system.state.zones[0].currentSpecialFunction = 'QUICK_VETO';
   const { client, calls } = recordingClient();
-  await commandFor(entry, 'zone:system-1-0:target-temperature')(client, 22);
+  await commandFor(entry, id('zone:system-1-0:target-temperature'))(client, 22);
 
   assert.equal(calls[0].method, 'PATCH');
   assert.deepEqual(calls[0].body, { desiredRoomTemperatureSetpoint: 22 });
@@ -77,7 +77,7 @@ test('setting a temperature on a manual zone writes the manual setpoint', async 
   const entry = tliSnapshotEntry();
   entry.system.configuration.zones[0].heating.operationModeHeating = 'MANUAL';
   const { client, calls } = recordingClient();
-  await commandFor(entry, 'zone:system-1-0:target-temperature')(client, 19.5);
+  await commandFor(entry, id('zone:system-1-0:target-temperature'))(client, 19.5);
 
   assert.equal(calls[0].method, 'PATCH');
   assert.match(calls[0].url, /\/zones\/0\/manual-mode-setpoint$/);
@@ -90,7 +90,7 @@ test('setting a temperature on a zone that is off is refused with a clear reason
   const { client, calls } = recordingClient();
 
   await assert.rejects(
-    () => commandFor(entry, 'zone:system-1-0:target-temperature')(client, 21),
+    () => commandFor(entry, id('zone:system-1-0:target-temperature'))(client, 21),
     /OFF mode/,
   );
   assert.equal(calls.length, 0, 'nothing must be sent to the boiler');
@@ -100,7 +100,7 @@ test('a vrc700 zone in comfort mode uses the comfort temperature endpoint', asyn
   const entry = vrc700SnapshotEntry();
   entry.system.configuration.zones[0].heating.operationModeHeating = 'DAY';
   const { client, calls } = recordingClient();
-  await commandFor(entry, 'zone:system-2-0:target-temperature')(client, 20.5);
+  await commandFor(entry, id('zone:system-2-0:target-temperature'))(client, 20.5);
 
   assert.equal(calls[0].method, 'PATCH');
   assert.match(
@@ -112,12 +112,15 @@ test('a vrc700 zone in comfort mode uses the comfort temperature endpoint', asyn
 
 test('the zone mode is translated into the vocabulary of each controller', async () => {
   const tli = recordingClient();
-  await commandFor(tliSnapshotEntry(), 'zone:system-1-0:mode')(tli.client, THERMOSTAT_MODE.HEATING);
+  await commandFor(tliSnapshotEntry(), id('zone:system-1-0:mode'))(
+    tli.client,
+    THERMOSTAT_MODE.HEATING,
+  );
   assert.deepEqual(tli.calls[0].body, { operationMode: 'MANUAL' });
   assert.match(tli.calls[0].url, /end-user-app-api.*\/zones\/0\/heating-operation-mode$/);
 
   const vrc700 = recordingClient();
-  await commandFor(vrc700SnapshotEntry(), 'zone:system-2-0:mode')(
+  await commandFor(vrc700SnapshotEntry(), id('zone:system-2-0:mode'))(
     vrc700.client,
     THERMOSTAT_MODE.HEATING,
   );
@@ -129,7 +132,8 @@ test('the zone mode is translated into the vocabulary of each controller', async
 test('a cooling mode is refused: a Saunier Duval boiler does not cool', async () => {
   const { client, calls } = recordingClient();
   await assert.rejects(
-    () => commandFor(tliSnapshotEntry(), 'zone:system-1-0:mode')(client, THERMOSTAT_MODE.COOLING),
+    () =>
+      commandFor(tliSnapshotEntry(), id('zone:system-1-0:mode'))(client, THERMOSTAT_MODE.COOLING),
     /not supported/,
   );
   assert.equal(calls.length, 0);
@@ -137,7 +141,7 @@ test('a cooling mode is refused: a Saunier Duval boiler does not cool', async ()
 
 test('the hot water setpoint is rounded and clamped to the range of the boiler', async () => {
   const { client, calls } = recordingClient();
-  const command = commandFor(tliSnapshotEntry(), 'hot-water:system-1-255:target-temperature');
+  const command = commandFor(tliSnapshotEntry(), id('hot-water:system-1-255:target-temperature'));
 
   await command(client, 60.4);
   assert.match(calls[0].url, /\/domestic-hot-water\/255\/temperature$/);
@@ -151,14 +155,14 @@ test('the hot water setpoint is rounded and clamped to the range of the boiler',
 
 test('the hot water mode is translated per controller family', async () => {
   const tli = recordingClient();
-  await commandFor(tliSnapshotEntry(), 'hot-water:system-1-255:mode')(
+  await commandFor(tliSnapshotEntry(), id('hot-water:system-1-255:mode'))(
     tli.client,
     WATER_HEATER_MODE.MANUAL,
   );
   assert.deepEqual(tli.calls[0].body, { operationMode: 'MANUAL' });
 
   const vrc700 = recordingClient();
-  await commandFor(vrc700SnapshotEntry(), 'hot-water:system-2-255:mode')(
+  await commandFor(vrc700SnapshotEntry(), id('hot-water:system-2-255:mode'))(
     vrc700.client,
     WATER_HEATER_MODE.PROGRAM,
   );
@@ -167,7 +171,7 @@ test('the hot water mode is translated per controller family', async () => {
 
 test('the boost is started with a POST and cancelled with a DELETE', async () => {
   const { client, calls } = recordingClient();
-  const command = commandFor(tliSnapshotEntry(), 'hot-water:system-1-255:boost');
+  const command = commandFor(tliSnapshotEntry(), id('hot-water:system-1-255:boost'));
 
   await command(client, 1);
   assert.equal(calls[0].method, 'POST');

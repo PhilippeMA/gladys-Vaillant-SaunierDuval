@@ -10,7 +10,7 @@ export function tliSnapshotEntry(overrides = {}) {
     home: { homeName: 'Maison', systemId: 'system-1', nomenclature: 'MiGo Link' },
     systemId: 'system-1',
     controlIdentifier: 'tli',
-    connected: true,
+    online: true,
     troubleCodes: [{ serialNumber: 'abc', articleNumber: '0010', codes: [] }],
     system: {
       state: {
@@ -73,7 +73,7 @@ export function vrc700SnapshotEntry(overrides = {}) {
     home: { homeName: 'Chalet', systemId: 'system-2', nomenclature: 'MiGo' },
     systemId: 'system-2',
     controlIdentifier: 'vrc700',
-    connected: true,
+    online: true,
     troubleCodes: [
       {
         serialNumber: 'def',

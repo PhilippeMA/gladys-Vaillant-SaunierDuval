@@ -298,13 +298,19 @@ export class SaunierDuvalClient {
 
   /**
    * Temporarily override the setpoint of a zone that follows its schedule
-   * ("quick veto"). Extending an override in progress is a PATCH, starting a
+   * ("quick veto"). Changing an override in progress is a PATCH, starting a
    * new one is a POST.
+   *
+   * On an override already running, the temperature alone is changed and the
+   * time left is kept — turning the dial does not restart the clock. Pass
+   * `restartDuration` when the caller states a duration explicitly (a scene
+   * action "override for 2 hours"): the clock then starts over.
    */
   setZoneQuickVeto(
     { systemId, controlIdentifier, index, currentSpecialFunction },
     temperature,
     durationHours,
+    { restartDuration = false } = {},
   ) {
     const url =
       controlIdentifier === CONTROL_IDENTIFIERS.VRC700
@@ -312,7 +318,10 @@ export class SaunierDuvalClient {
         : `${getSystemApiBase(systemId, controlIdentifier)}/zones/${index}/quick-veto`;
 
     if (currentSpecialFunction === ZONE_SPECIAL_FUNCTIONS.QUICK_VETO) {
-      return this.request('PATCH', url, { desiredRoomTemperatureSetpoint: temperature });
+      return this.request('PATCH', url, {
+        desiredRoomTemperatureSetpoint: temperature,
+        ...(restartDuration ? { duration: durationHours } : {}),
+      });
     }
     return this.request('POST', url, {
       desiredRoomTemperatureSetpoint: temperature,
@@ -359,6 +368,20 @@ export class SaunierDuvalClient {
   /** Start or stop a hot water boost (one-off tank heating). */
   setDomesticHotWaterBoost({ systemId, controlIdentifier, index }, enabled) {
     const url = `${getSystemApiBase(systemId, controlIdentifier)}/domestic-hot-water/${index}/boost`;
+    return enabled ? this.request('POST', url, {}) : this.request('DELETE', url);
+  }
+
+  // --- Write: installation ----------------------------------------------------
+
+  /**
+   * Start or stop the "ventilation boost" of an installation: the airing
+   * function of the control, the one the application offers on every system
+   * whether or not a ventilation unit is fitted. It is a single endpoint for
+   * the whole installation, on both controller families, and the zones then
+   * report VENTILATION_BOOST as their special function until it ends.
+   */
+  setVentilationBoost({ systemId, controlIdentifier }, enabled) {
+    const url = `${getSystemApiBase(systemId, controlIdentifier)}/ventilation-boost`;
     return enabled ? this.request('POST', url, {}) : this.request('DELETE', url);
   }
 }

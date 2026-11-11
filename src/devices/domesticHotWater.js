@@ -159,9 +159,18 @@ export function buildDomesticHotWaterDevice(gladys, entry, index) {
   };
 
   return {
+    kind: DEVICE_TYPE,
+    systemId: entry.systemId,
     externalId: ids.device,
     device,
     states,
+    // What the dashboard widget reads, already decoded.
+    info: {
+      temperature: round1(dhw.state.currentDhwTemperature),
+      targetTemperature: round1(dhw.configuration.tappingSetpoint),
+      boosting: isBoosting,
+      features: { boost: ids.feature(FEATURE.BOOST) },
+    },
     commands: {
       [ids.feature(FEATURE.TARGET_TEMPERATURE)]: (client, value) => {
         const clamped = Math.min(Math.max(value, minSetpoint), maxSetpoint);

@@ -8,14 +8,10 @@
   },
   "version": "1.0.2",
   "docker_image": "ghcr.io/philippema/gladys-vaillant-saunierduval:1.0.2",
-  "gladys_version": ">=4.86.0",
+  "gladys_version": ">=5.1.0",
   "cover_image": "https://raw.githubusercontent.com/PhilippeMA/gladys-Vaillant-SaunierDuval/main/cover.png",
-  "categories": [
-    "climate"
-  ],
-  "transports": [
-    "cloud"
-  ],
+  "categories": ["climate"],
+  "transports": ["cloud"],
   "config_schema": [
     {
       "key": "intro",
@@ -239,6 +235,287 @@
         "fr": "Interroge la chaudière immédiatement, sans attendre le prochain cycle."
       },
       "timeout_seconds": 60
+    }
+  ],
+  "scene_triggers": [
+    {
+      "key": "fault_detected",
+      "label": {
+        "en": "Boiler fault detected",
+        "fr": "Défaut chaudière détecté"
+      },
+      "description": {
+        "en": "The boiler reports a new fault or maintenance code.",
+        "fr": "La chaudière signale un nouveau code de défaut ou de maintenance."
+      },
+      "fields": [
+        {
+          "key": "device",
+          "type": "select",
+          "source": "devices",
+          "label": {
+            "en": "Boiler",
+            "fr": "Chaudière"
+          },
+          "description": {
+            "en": "Leave empty for any installation of the account.",
+            "fr": "Laissez vide pour toutes les installations du compte."
+          }
+        }
+      ],
+      "variables": [
+        {
+          "key": "code",
+          "type": "string",
+          "label": {
+            "en": "Fault code",
+            "fr": "Code du défaut"
+          }
+        },
+        {
+          "key": "title",
+          "type": "string",
+          "label": {
+            "en": "Fault title",
+            "fr": "Intitulé du défaut"
+          }
+        },
+        {
+          "key": "description",
+          "type": "string",
+          "label": {
+            "en": "Fault description",
+            "fr": "Description du défaut"
+          }
+        },
+        {
+          "key": "kind",
+          "type": "string",
+          "label": {
+            "en": "Kind of code (fault, maintenance...)",
+            "fr": "Type de code (défaut, maintenance...)"
+          }
+        },
+        {
+          "key": "count",
+          "type": "number",
+          "label": {
+            "en": "Number of active codes",
+            "fr": "Nombre de codes actifs"
+          }
+        }
+      ]
+    },
+    {
+      "key": "faults_cleared",
+      "label": {
+        "en": "Boiler faults cleared",
+        "fr": "Défauts chaudière résolus"
+      },
+      "description": {
+        "en": "The boiler no longer reports any fault code.",
+        "fr": "La chaudière ne signale plus aucun code de défaut."
+      },
+      "fields": [
+        {
+          "key": "device",
+          "type": "select",
+          "source": "devices",
+          "label": {
+            "en": "Boiler",
+            "fr": "Chaudière"
+          },
+          "description": {
+            "en": "Leave empty for any installation of the account.",
+            "fr": "Laissez vide pour toutes les installations du compte."
+          }
+        }
+      ]
+    },
+    {
+      "key": "gateway_offline",
+      "label": {
+        "en": "Gateway offline",
+        "fr": "Passerelle hors ligne"
+      },
+      "description": {
+        "en": "The MiGo gateway stopped answering: the values are no longer updated.",
+        "fr": "La passerelle MiGo ne répond plus : les valeurs ne sont plus mises à jour."
+      },
+      "fields": [
+        {
+          "key": "device",
+          "type": "select",
+          "source": "devices",
+          "label": {
+            "en": "Boiler",
+            "fr": "Chaudière"
+          },
+          "description": {
+            "en": "Leave empty for any installation of the account.",
+            "fr": "Laissez vide pour toutes les installations du compte."
+          }
+        }
+      ]
+    },
+    {
+      "key": "gateway_online",
+      "label": {
+        "en": "Gateway back online",
+        "fr": "Passerelle de nouveau en ligne"
+      },
+      "description": {
+        "en": "The MiGo gateway answers again after an interruption.",
+        "fr": "La passerelle MiGo répond de nouveau après une interruption."
+      },
+      "fields": [
+        {
+          "key": "device",
+          "type": "select",
+          "source": "devices",
+          "label": {
+            "en": "Boiler",
+            "fr": "Chaudière"
+          },
+          "description": {
+            "en": "Leave empty for any installation of the account.",
+            "fr": "Laissez vide pour toutes les installations du compte."
+          }
+        }
+      ]
+    }
+  ],
+  "scene_actions": [
+    {
+      "key": "start_override",
+      "label": {
+        "en": "Override a zone temperature",
+        "fr": "Forcer la température d'une zone"
+      },
+      "description": {
+        "en": "Set a temperature for a given time on a scheduled zone, then the schedule takes over again.",
+        "fr": "Applique une température pendant une durée sur une zone programmée, puis le programme reprend la main."
+      },
+      "timeout_seconds": 30,
+      "fields": [
+        {
+          "key": "zone",
+          "type": "select",
+          "source": "devices",
+          "required": true,
+          "label": {
+            "en": "Heating zone",
+            "fr": "Zone de chauffage"
+          },
+          "description": {
+            "en": "Pick a heating zone: the list also shows the other devices of the integration.",
+            "fr": "Choisissez une zone de chauffage : la liste montre aussi les autres appareils de l'intégration."
+          }
+        },
+        {
+          "key": "temperature",
+          "type": "number",
+          "required": true,
+          "min": 5,
+          "max": 30,
+          "label": {
+            "en": "Temperature (°C)",
+            "fr": "Température (°C)"
+          }
+        },
+        {
+          "key": "duration",
+          "type": "number",
+          "min": 30,
+          "max": 1440,
+          "label": {
+            "en": "Duration (minutes)",
+            "fr": "Durée (minutes)"
+          },
+          "description": {
+            "en": "From 30 to 1440, by steps of 30. Leave empty to use the override duration set on the zone.",
+            "fr": "De 30 à 1440, par pas de 30. Laissez vide pour utiliser la durée de forçage réglée sur la zone."
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "key": "started",
+          "type": "boolean",
+          "label": {
+            "en": "Override started (false if the zone follows no schedule)",
+            "fr": "Forçage démarré (faux si la zone ne suit pas de programme)"
+          }
+        }
+      ]
+    },
+    {
+      "key": "cancel_override",
+      "label": {
+        "en": "Cancel a zone override",
+        "fr": "Annuler le forçage d'une zone"
+      },
+      "description": {
+        "en": "End the temporary override of a zone: it goes back to its schedule.",
+        "fr": "Met fin au forçage temporaire d'une zone : elle revient à son programme."
+      },
+      "timeout_seconds": 30,
+      "fields": [
+        {
+          "key": "zone",
+          "type": "select",
+          "source": "devices",
+          "required": true,
+          "label": {
+            "en": "Heating zone",
+            "fr": "Zone de chauffage"
+          },
+          "description": {
+            "en": "Pick a heating zone: the list also shows the other devices of the integration.",
+            "fr": "Choisissez une zone de chauffage : la liste montre aussi les autres appareils de l'intégration."
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "key": "cancelled",
+          "type": "boolean",
+          "label": {
+            "en": "Override cancelled (false if none was running)",
+            "fr": "Forçage annulé (faux si aucun n'était en cours)"
+          }
+        }
+      ]
+    }
+  ],
+  "widgets": [
+    {
+      "key": "boiler",
+      "label": {
+        "en": "Saunier Duval boiler",
+        "fr": "Chaudière Saunier Duval"
+      },
+      "description": {
+        "en": "Temperatures, state of each zone, gateway, faults, and the two boosts.",
+        "fr": "Températures, état de chaque zone, passerelle, défauts, et les deux boosts."
+      },
+      "icon": "thermometer",
+      "settings": [
+        {
+          "key": "device",
+          "type": "select",
+          "source": "devices",
+          "label": {
+            "en": "Installation",
+            "fr": "Installation"
+          },
+          "description": {
+            "en": "Only with several boilers: pick any device of the installation to show.",
+            "fr": "Seulement avec plusieurs chaudières : choisissez un appareil de l'installation à afficher."
+          }
+        }
+      ],
+      "action_timeout_seconds": 30
     }
   ]
 }
